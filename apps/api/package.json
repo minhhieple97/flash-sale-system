@@ -6,6 +6,8 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "test": "jest",
+    "test:unit": "jest --selectProjects unit",
+    "test:integration": "jest --selectProjects integration",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "biome check --error-on-warnings . && node ../../scripts/verify-agent-limits.mjs"
   },

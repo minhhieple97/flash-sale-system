@@ -1,0 +1,2 @@
+export const SCHEMA_ADVISORY_LOCK_KEY = 726_011_001;
+export const DATABASE_POOL_MAX = 20;
