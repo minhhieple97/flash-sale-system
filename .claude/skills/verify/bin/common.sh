@@ -30,8 +30,7 @@ wait_for() {
 }
 
 api_ready() {
-  curl -sf -o /dev/null "$API_URL/api/v1/health" && return 0
-  curl -s "$API_URL/api/v1/__verify_ready__" | grep -q '"statusCode":404'
+  curl -sf -o /dev/null "$API_URL/health"
 }
 
 web_ready() {

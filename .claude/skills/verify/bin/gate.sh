@@ -50,6 +50,7 @@ run_step "pnpm -r lint (biome + verify-agent-limits)" lint pnpm -r lint
 run_step "pnpm -r typecheck" typecheck pnpm -r typecheck
 check_jest_open_handles
 run_step "web vitest" web-vitest pnpm --filter @flash-sale/web test
+run_step "pnpm -r build" build pnpm -r build
 
 if [ "${#FAILED[@]}" -eq 0 ]; then
   echo "VERIFY OK"

@@ -30,11 +30,13 @@ Each feature file starts with an H1 title, a status line, and one paragraph desc
 
 ## Features
 
-Implemented (Phase 1):
+Implemented (Phases 1 and 2):
 - [Storefront shell](./storefront-shell.md) covers the web page loading and React rendering the app heading.
-- [API HTTP surface](./api-http-surface.md) covers the `/api/v1` prefix and the JSON error shape.
+- [API HTTP surface](./api-http-surface.md) covers the `/api/v1` prefix and the `{ code, message }` error body.
+- [Health](./health.md) covers `GET /health` with its Postgres and Redis checks.
+- [Featured product](./products-featured.md) covers `GET /api/v1/products/featured`.
+- [Flash sale status](./flash-sale-status.md) covers the read path of `GET /api/v1/flash-sales/current`. State changes through the admin reset arrive in Phase 3.4.
 
 Planned (journeys from `requirements.md`; they fail until their phase lands):
-- [Flash sale status](./flash-sale-status.md) is Phase 2.4.
 - [Checkout purchase](./checkout-purchase.md) is Phase 3.3.
 - [Order lookup](./order-lookup.md) is Phase 3.2.

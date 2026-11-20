@@ -20,8 +20,9 @@ pnpm verify          # = bash .claude/skills/verify/bin/gate.sh
 | containers | postgres and redis compose services report `healthy` |
 | lint | `pnpm -r lint` (Biome `--error-on-warnings` + `scripts/verify-agent-limits.mjs`) |
 | typecheck | `pnpm -r typecheck` |
-| api tests | `pnpm --filter @flash-sale/api exec jest --detectOpenHandles --forceExit`, failed if Jest reports any open handle |
+| api tests | `pnpm --filter @flash-sale/api exec jest --detectOpenHandles --forceExit`, failed if Jest reports any open handle. Runs both Jest projects: `unit` (no infrastructure) and `integration` (the compose postgres and redis, configured from the root `.env`) |
 | web tests | `pnpm --filter @flash-sale/web test` (Vitest) |
+| build | `pnpm -r build` |
 
 One `PASS`/`FAIL` line per check, then `VERIFY OK` (exit 0) or `VERIFY FAILED: <checks>` (exit 1). A failure prints the last 30 log lines and the log path. Quote the PASS/FAIL lines in your report.
 
@@ -35,12 +36,12 @@ One `PASS`/`FAIL` line per check, then `VERIFY OK` (exit 0) or `VERIFY FAILED: <
 2. `docker compose up -d postgres redis`, waits until both are `healthy`.
 3. Builds the API, starts `node apps/api/dist/main.js` with `PORT=$VERIFY_API_PORT` (default `3100`).
 4. Starts Vite dev for the web on `127.0.0.1:$VERIFY_WEB_PORT` (default `5180`, `--strictPort`).
-5. Ready means usable. The API answers `GET /api/v1/health` with 2xx, or, until the health endpoint exists, `GET /api/v1/__verify_ready__` with Nest's JSON 404. The web serves the page with `<div id="root">`.
+5. Ready means usable. The API answers `GET /health` (outside the `/api/v1` prefix) with 2xx, which requires both `SELECT 1` and Redis `PING` to succeed. Nest runs every `OnModuleInit`, including `SchemaConstraintsInitializer`, before it listens, so a 2xx also means the schema and its constraints exist. The web serves the page with `<div id="root">`.
 6. Prints `READY run=<id> api=<url> web=<url> evidence=<dir>`.
 
 Host port 3000 belongs to another local process on this machine, which is why verification never uses it. Each process runs in its own process group recorded in `.verify-run/{api,web}.pgid`, with logs in `.verify-run/*.log`.
 
-Once a phase adds migrations or seed data (Phase 2 `SchemaConstraintsInitializer`, Phase 3 hydration), extend `launch.sh` so the API's readiness waits for them, and add that wait to this section.
+Phase 3 hydration runs in `OnApplicationBootstrap`, also before listen, so the same `/health` wait covers it. If seeding ever moves off the boot path, extend `launch.sh` to wait for it and say so here.
 
 ## Doctor
 
@@ -66,7 +67,7 @@ Read [features/README.md](features/README.md), then follow the matching feature 
 Artifacts go to `.verify-evidence/<run-id>/<feature>/` (gitignored) and survive cleanup. Cleanup also copies the run's logs into `.verify-evidence/<run-id>/`.
 
 Proof standards:
-- Drive the real user path: public HTTP routes and the rendered page. Never call services directly or add test-only endpoints. `__verify_ready__` is only a readiness probe, never proof of a feature.
+- Drive the real user path: public HTTP routes and the rendered page. Never call services directly or add test-only endpoints.
 - Capture the action and the resulting state. For a mutation, add a second read-only view of the stored state: the user lookup endpoint, and for stock or orders a `psql` or `redis-cli` read via `docker compose exec`.
 - Use mocks only where a production boundary already isolates the external system.
 - Report each feature ID and entry point you drove. A path you could not reach is reported with the command and the unmet precondition, never as verified through a different path.
