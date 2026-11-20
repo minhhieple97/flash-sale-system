@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/app.setup';
+import { FlashSaleResetService } from '../../src/modules/admin/services/flash-sale-reset.service';
 
 describe('AppModule (e2e)', () => {
   let app: NestFastifyApplication;
@@ -18,7 +20,11 @@ describe('AppModule (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    try {
+      await app.get(FlashSaleResetService, { strict: false }).reset({});
+    } finally {
+      await app.close();
+    }
   });
 
   it('reports every dependency up on GET /health', async () => {
@@ -43,4 +49,40 @@ describe('AppModule (e2e)', () => {
       }
     },
   );
+
+  it('answers the order lookup of an unknown user with status NONE', async () => {
+    const response = await request(app.getHttpServer()).get(`/api/v1/orders/user/${randomUUID()}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ hasPurchased: false, status: 'NONE', orderId: null });
+  });
+
+  it('answers 400 INVALID_USER_ID on a purchase with an invalid user id', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/checkout/purchase')
+      .send({ userId: 'a!' });
+
+    expect(response.status).toBe(400);
+    expect(response.body.code).toBe('INVALID_USER_ID');
+  });
+
+  it('resets the sale over HTTP and serves the new state on the next status read', async () => {
+    const reset = await request(app.getHttpServer())
+      .post('/api/v1/admin/flash-sales/reset')
+      .send({ totalStock: 7, startsOffsetSeconds: -60, durationSeconds: 3600 });
+    const current = await request(app.getHttpServer()).get('/api/v1/flash-sales/current');
+
+    expect(reset.status).toBe(200);
+    expect(reset.body).toMatchObject({ saleState: 'ACTIVE', totalStock: 7, remainingStock: 7 });
+    expect(current.status).toBe(200);
+    expect(current.body).toMatchObject({ saleState: 'ACTIVE', totalStock: 7, remainingStock: 7 });
+  });
+
+  it('answers 400 on an admin reset with an invalid body', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/admin/flash-sales/reset')
+      .send({ totalStock: -1 });
+
+    expect(response.status).toBe(400);
+  });
 });

@@ -26,6 +26,14 @@ export interface FlashSaleCampaign {
   endsAt: Date;
 }
 
+/** Admin reset of the campaign row; `remaining_stock` is set back to `totalStock`. */
+export interface RescheduleCampaignParams {
+  saleId: string;
+  totalStock: number;
+  startsAtMs: number;
+  endsAtMs: number;
+}
+
 export interface FlashSaleCacheEntry {
   snapshot: Promise<FlashSaleSnapshot | null>;
   expiresAtMs: number;

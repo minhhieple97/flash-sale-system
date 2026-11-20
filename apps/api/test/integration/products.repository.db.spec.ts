@@ -5,6 +5,7 @@ import { DataSource } from 'typeorm';
 import { AppConfigModule } from '../../src/config/app-config.module';
 import { DatabaseModule } from '../../src/infrastructure/database/database.module';
 import { ProductEntity } from '../../src/modules/products/entities/product.entity';
+import type { Product } from '../../src/modules/products/interfaces/product.interface';
 import { ProductsRepository } from '../../src/modules/products/repositories/products.repository';
 
 describe('ProductsRepository', () => {
@@ -65,5 +66,38 @@ describe('ProductsRepository', () => {
 
   it('maps an unknown id to null', async () => {
     await expect(repository.findById(randomUUID())).resolves.toBeNull();
+  });
+
+  describe('insertIfAbsent', () => {
+    function productWith(id: string, name: string): Product {
+      insertedIds.push(id);
+      return {
+        id,
+        sku: randomUUID(),
+        name,
+        description: 'seeded',
+        originalPriceCents: 2000,
+        salePriceCents: 900,
+        imageUrl: null,
+      };
+    }
+
+    it('inserts the product when its id is missing', async () => {
+      const product = productWith(randomUUID(), 'Seeded');
+
+      await repository.insertIfAbsent(product);
+
+      await expect(repository.findById(product.id)).resolves.toEqual(product);
+    });
+
+    it('leaves an existing row unchanged when the id already exists', async () => {
+      const original = productWith(randomUUID(), 'Original');
+      await repository.insertIfAbsent(original);
+      const conflicting = { ...productWith(original.id, 'Overwrite'), sku: randomUUID() };
+
+      await repository.insertIfAbsent(conflicting);
+
+      await expect(repository.findById(original.id)).resolves.toEqual(original);
+    });
   });
 });

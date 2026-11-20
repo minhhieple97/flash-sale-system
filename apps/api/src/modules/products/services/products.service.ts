@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   FEATURED_PRODUCT_ID,
+  FEATURED_PRODUCT_SEED,
   PRODUCT_ERROR_CODES,
   PRODUCT_NOT_FOUND_MESSAGE,
 } from '../constants/products.constants';
@@ -20,5 +21,11 @@ export class ProductsService {
       });
     }
     return product;
+  }
+
+  /** Boot-time seed. An existing product comes back unchanged. */
+  async ensureFeaturedProduct(): Promise<Product> {
+    await this.productsRepository.insertIfAbsent(FEATURED_PRODUCT_SEED);
+    return this.getFeaturedProduct();
   }
 }
