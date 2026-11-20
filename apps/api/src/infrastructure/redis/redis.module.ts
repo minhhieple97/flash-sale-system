@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { Inject, Module, type OnModuleDestroy } from '@nestjs/common';
+import { Inject, Module, type OnApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 import type { AppEnv } from '../../config/env.interface';
@@ -29,10 +29,14 @@ const FLASH_SALE_SCRIPTS = [ATTEMPT_PURCHASE_SCRIPT, ROLLBACK_PURCHASE_SCRIPT];
   ],
   exports: [REDIS_CLIENT],
 })
-export class RedisModule implements OnModuleDestroy {
+export class RedisModule implements OnApplicationShutdown {
   constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis) {}
 
-  async onModuleDestroy(): Promise<void> {
+  /**
+   * Quits in the shutdown phase, which Nest runs after every module's destroy hooks. The BullMQ
+   * worker and queue close in the destroy phase, so in-flight jobs finish against a live client.
+   */
+  async onApplicationShutdown(): Promise<void> {
     if (this.redis.status === REDIS_CLOSED_STATUS) return;
     const closed = once(this.redis, REDIS_CLOSED_STATUS);
     await this.redis.quit();

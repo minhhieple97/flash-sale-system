@@ -8,6 +8,8 @@ const shared = {
 } satisfies Config;
 
 const config: Config = {
+  // Integration specs share the single order-persistence queue and real workers, so files must not run in parallel.
+  maxWorkers: 1,
   projects: [
     { ...shared, displayName: 'unit', testMatch: ['<rootDir>/test/unit/**/*.spec.ts'] },
     {
