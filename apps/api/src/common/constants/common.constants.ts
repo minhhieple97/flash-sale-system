@@ -8,7 +8,9 @@ export const USER_ID_PATTERN = /^[a-z0-9._@+-]+$/;
 export const ERROR_CODES = {
   INVALID_USER_ID: 'INVALID_USER_ID',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
+  TEMPORARY_FAILURE: 'TEMPORARY_FAILURE',
 } as const;
 export const INTERNAL_ERROR_MESSAGE = 'Internal server error';
+export const TEMPORARY_FAILURE_MESSAGE = 'Temporarily unable to process the request; please retry';
 export const INVALID_USER_ID_MESSAGE = `userId must be ${USER_ID_MIN_LENGTH}-${USER_ID_MAX_LENGTH} characters of a-z, 0-9, ".", "_", "@", "+" or "-"`;
 export const VALIDATION_MESSAGE_SEPARATOR = '; ';
