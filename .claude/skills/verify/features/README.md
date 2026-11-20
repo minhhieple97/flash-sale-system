@@ -36,7 +36,7 @@ Implemented (Phases 1 to 3):
 - [Health](./health.md) covers `GET /health` with its Postgres and Redis checks.
 - [Featured product](./products-featured.md) covers `GET /api/v1/products/featured`.
 - [Flash sale status](./flash-sale-status.md) covers `GET /api/v1/flash-sales/current` and its four states, set through the admin reset.
-- [Checkout purchase](./checkout-purchase.md) covers `POST /api/v1/checkout/purchase`: reserve, duplicate, sold out, window and invalid id.
+- [Checkout purchase](./checkout-purchase.md) covers `POST /api/v1/checkout/purchase`: reserve, duplicate, sold out, window, invalid id and unavailable.
 - [Order lookup](./order-lookup.md) covers `GET /api/v1/orders/user/:userId`: none, reserved and confirmed.
 - [Admin reset and boot hydration](./admin-reset.md) covers `POST /api/v1/admin/flash-sales/reset` and the Redis rebuild from PostgreSQL after a cold start.
 

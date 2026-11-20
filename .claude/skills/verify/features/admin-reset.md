@@ -2,7 +2,7 @@
 
 Status: implemented (Phase 3.4). The storefront scenario drawer (`reset-drawer`) is Phase 4.5 and is reported as `not implemented (Phase 4.5)` until it lands.
 
-A reviewer puts the sale into a known scenario with one call, and the API rebuilds its fast state from the database after a cold start. The reset drains the persistence queue, deletes the sale's orders, rewrites the campaign row and the Redis state, and drops the 200 ms status cache, so the next status read is fresh. Boot hydration seeds the sample product and campaign when missing and restores remaining stock as total minus confirmed orders.
+A reviewer puts the sale into a known scenario with one call, and the API rebuilds its fast state from the database after a cold start. The reset discards the queued persistence jobs (BullMQ `obliterate` with `force`), deletes the sale's orders, rewrites the campaign row and the Redis state, and drops the 200 ms status cache, so the next status read is fresh. Boot hydration seeds the sample product and campaign when missing and restores remaining stock as total minus confirmed orders.
 
 ## Sub-features
 
