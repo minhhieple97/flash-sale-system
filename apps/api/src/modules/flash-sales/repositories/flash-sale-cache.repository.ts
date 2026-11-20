@@ -10,31 +10,30 @@ import type { FlashSaleSnapshot } from '../interfaces/flash-sale.interface';
 
 type PipelineResult = [Error | null, unknown][] | null;
 
-function readText(hash: Record<string, string>, field: string): string {
-  const value = hash[field];
-  if (value === undefined || value === '') {
-    throw new Error(`Corrupt flash sale field ${field}: ${String(value)}`);
+function requireText(raw: string | undefined, field: string): string {
+  if (raw === undefined || raw === '') {
+    throw new Error(`Corrupt flash sale field ${field}: ${String(raw)}`);
   }
-  return value;
+  return raw;
 }
 
-function readNumber(hash: Record<string, string>, field: string): number {
-  const value = Number(readText(hash, field));
-  if (!Number.isFinite(value)) throw new Error(`Corrupt flash sale field ${field}: ${hash[field]}`);
+function requireNumber(raw: string | undefined, field: string): number {
+  const value = Number(requireText(raw, field));
+  if (!Number.isFinite(value)) throw new Error(`Corrupt flash sale field ${field}: ${raw}`);
   return value;
 }
 
 function parseSnapshot(hash: Record<string, string>, stock: string | null): FlashSaleSnapshot {
   return {
-    saleId: readText(hash, FIELDS.saleId),
-    productId: readText(hash, FIELDS.productId),
-    productName: readText(hash, FIELDS.productName),
-    salePriceCents: readNumber(hash, FIELDS.salePriceCents),
-    originalPriceCents: readNumber(hash, FIELDS.originalPriceCents),
-    totalStock: readNumber(hash, FIELDS.totalStock),
-    remainingStock: readNumber({ stock: stock ?? '0' }, 'stock'),
-    startsAtMs: readNumber(hash, FIELDS.startTimeMs),
-    endsAtMs: readNumber(hash, FIELDS.endTimeMs),
+    saleId: requireText(hash[FIELDS.saleId], FIELDS.saleId),
+    productId: requireText(hash[FIELDS.productId], FIELDS.productId),
+    productName: requireText(hash[FIELDS.productName], FIELDS.productName),
+    salePriceCents: requireNumber(hash[FIELDS.salePriceCents], FIELDS.salePriceCents),
+    originalPriceCents: requireNumber(hash[FIELDS.originalPriceCents], FIELDS.originalPriceCents),
+    totalStock: requireNumber(hash[FIELDS.totalStock], FIELDS.totalStock),
+    remainingStock: requireNumber(stock ?? '0', 'stock'),
+    startsAtMs: requireNumber(hash[FIELDS.startTimeMs], FIELDS.startTimeMs),
+    endsAtMs: requireNumber(hash[FIELDS.endTimeMs], FIELDS.endTimeMs),
   };
 }
 

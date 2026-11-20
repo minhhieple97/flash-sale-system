@@ -1,5 +1,4 @@
-export const SALE_STATES = ['UPCOMING', 'ACTIVE', 'SOLD_OUT', 'ENDED'] as const;
-export type SaleState = (typeof SALE_STATES)[number];
+export type SaleState = 'UPCOMING' | 'ACTIVE' | 'SOLD_OUT' | 'ENDED';
 
 export interface FlashSaleSnapshot {
   saleId: string;
