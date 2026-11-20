@@ -2,7 +2,6 @@ import { Controller, Get } from '@nestjs/common';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/app.setup';
 
 @Controller('probe')
@@ -18,7 +17,6 @@ describe('app smoke', () => {
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [AppModule],
       controllers: [ProbeController],
     }).compile();
     app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
@@ -42,6 +40,6 @@ describe('app smoke', () => {
     const response = await request(app.getHttpServer()).get('/probe');
 
     expect(response.status).toBe(404);
-    expect(response.body.statusCode).toBe(404);
+    expect(response.body.code).toBe('NOT_FOUND');
   });
 });
