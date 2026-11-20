@@ -12,7 +12,8 @@
     "test": "pnpm -r test",
     "test:scripts": "node --test scripts/*.test.mjs",
     "typecheck": "pnpm -r typecheck",
-    "build": "pnpm -r build"
+    "build": "pnpm -r build",
+    "verify": "bash .claude/skills/verify/bin/gate.sh"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.8",
