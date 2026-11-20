@@ -1,6 +1,6 @@
 # Checkout purchase
 
-Status: planned (Phase 3.3). Until it lands, `POST /api/v1/checkout/purchase` returns 404 and this journey is reported as `not implemented (Phase 3.3)`.
+Status: API implemented (Phase 3.3). The storefront form (`buy-form`) is Phase 4.3 and is reported as `not implemented (Phase 4.3)` until it lands.
 
 A shopper enters a user ID and buys the one unit they are allowed. They get a reservation immediately, a clear rejection when they already bought or the sale is sold out, upcoming or ended, and never more than one unit per normalized user.
 
@@ -29,6 +29,8 @@ Preconditions:
 - **Duplicate with a variant.** Run the same with `'{"userId":"  ALICE@example.com "}'` as `alice-2`. Status 409, `code` `ALREADY_PURCHASED`.
 - **Sell out.** Buy as `bob@example.com` (202), then as `carol@example.com`. Carol gets 410 `SOLD_OUT`.
 - **Invalid ID.** Buy with `'{"userId":"a!"}'`. Status 400, `code` `INVALID_USER_ID`.
+- **Window.** Reset with `'{"startsOffsetSeconds":15,"durationSeconds":3600}'`, then buy as `dave@example.com`. Status 422, `code` `SALE_UPCOMING`. Reset with `'{"startsOffsetSeconds":-7200,"durationSeconds":3600}'`, buy again. Status 422, `code` `SALE_ENDED`. Neither creates an order.
+- **Buy again after a reset.** Reset with `'{}'`, then buy as `alice@example.com`. Status 202 with a new `orderId`, and the lookup shows it `CONFIRMED` once the worker drains.
 - **Side effects.** Run `docker compose exec -T redis redis-cli GET flash_sale:00000000-0000-4000-8000-000000000001:stock`, which prints `0`. Run `docker compose exec -T postgres psql -U flash_sale -d flash_sale -tAc "select count(*) from orders where flash_sale_id='00000000-0000-4000-8000-000000000001'"` after the worker drains, which prints `2`.
 - **Proof.** Keep every `*.body.json` plus the two side-effect outputs, saved into the feature's evidence dir.
 

@@ -30,13 +30,14 @@ Each feature file starts with an H1 title, a status line, and one paragraph desc
 
 ## Features
 
-Implemented (Phases 1 and 2):
+Implemented (Phases 1 to 3):
 - [Storefront shell](./storefront-shell.md) covers the web page loading and React rendering the app heading.
 - [API HTTP surface](./api-http-surface.md) covers the `/api/v1` prefix and the `{ code, message }` error body.
 - [Health](./health.md) covers `GET /health` with its Postgres and Redis checks.
 - [Featured product](./products-featured.md) covers `GET /api/v1/products/featured`.
-- [Flash sale status](./flash-sale-status.md) covers the read path of `GET /api/v1/flash-sales/current`. State changes through the admin reset arrive in Phase 3.4.
+- [Flash sale status](./flash-sale-status.md) covers `GET /api/v1/flash-sales/current` and its four states, set through the admin reset.
+- [Checkout purchase](./checkout-purchase.md) covers `POST /api/v1/checkout/purchase`: reserve, duplicate, sold out, window and invalid id.
+- [Order lookup](./order-lookup.md) covers `GET /api/v1/orders/user/:userId`: none, reserved and confirmed.
+- [Admin reset and boot hydration](./admin-reset.md) covers `POST /api/v1/admin/flash-sales/reset` and the Redis rebuild from PostgreSQL after a cold start.
 
-Planned (journeys from `requirements.md`; they fail until their phase lands):
-- [Checkout purchase](./checkout-purchase.md) is Phase 3.3.
-- [Order lookup](./order-lookup.md) is Phase 3.2.
+Storefront sub-features of these files (`buy-form`, `lookup-card`, `status-banner`, `reset-drawer`) are planned for Phases 4.2 to 4.5 and are reported as `not implemented (Phase N)` until they land.

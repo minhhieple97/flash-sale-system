@@ -1,6 +1,6 @@
 # Order lookup
 
-Status: planned (Phase 3.2). Until it lands, `GET /api/v1/orders/user/:userId` returns 404 and this journey is reported as `not implemented (Phase 3.2)`.
+Status: API implemented (Phase 3.2). The storefront card and confirmation poller (`lookup-card`) are Phase 4.4 and are reported as `not implemented (Phase 4.4)` until they land.
 
 A shopper checks whether they hold an order. Right after buying they see `RESERVED`, and once the order is persisted they see `CONFIRMED` with the same order ID. A user who never bought sees `NONE`.
 
@@ -26,7 +26,8 @@ Preconditions:
 - **Never bought.** Run `.claude/skills/verify/bin/http.sh order-lookup nobody GET /api/v1/orders/user/nobody@example.com`. Status 200, `status` `NONE`, `orderId` `null`.
 - **Confirmed.** Poll `.claude/skills/verify/bin/http.sh order-lookup alice GET /api/v1/orders/user/alice@example.com` until `status` is `CONFIRMED` (at most 10 s). The `orderId` equals the one from `alice-1.body.json`.
 - **Normalized.** Run it with `ALICE@Example.com` as `alice-upper`. Same `orderId`.
-- **Proof.** Keep `nobody`, `alice` and `alice-upper` bodies, and quote the matching order IDs.
+- **Invalid.** Run `.claude/skills/verify/bin/http.sh order-lookup invalid GET '/api/v1/orders/user/a!'`. Status 400, `code` `INVALID_USER_ID`.
+- **Proof.** Keep `nobody`, `alice`, `alice-upper` and `invalid` bodies, and quote the matching order IDs.
 
 ## Gotchas
 
