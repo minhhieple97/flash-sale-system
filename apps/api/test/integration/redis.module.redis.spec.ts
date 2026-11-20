@@ -28,6 +28,10 @@ describe('RedisModule', () => {
     expect(client.options.port).toBe(Number(process.env.REDIS_PORT));
   });
 
+  it.each(['attemptPurchase', 'rollbackPurchase'])('registers the %s script command', (name) => {
+    expect(typeof Reflect.get(client, name)).toBe('function');
+  });
+
   it('quits the client when the module closes', async () => {
     const closing = await Test.createTestingModule({
       imports: [AppConfigModule, RedisModule],
