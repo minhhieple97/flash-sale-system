@@ -12,6 +12,8 @@ import {
   CONFIRMED_ORDER_STATUS,
   ORDER_PERSISTENCE_ATTEMPTS,
   ORDER_PERSISTENCE_CONCURRENCY,
+  orderCompensationJobId,
+  orderPersistenceJobId,
 } from '../../src/modules/orders/constants/orders.constants';
 import type {
   ReservationRef,
@@ -38,7 +40,7 @@ describe('order persistence pipeline (real worker)', () => {
   let persistence: OrderPersistenceService;
   let cacheHarness: OrderCacheHarness;
   let db: SaleDbHarness;
-  const orderIds: string[] = [];
+  const refs: ReservationRef[] = [];
 
   async function reserveOnNewSale(): Promise<ReservationRef> {
     const saleId = await cacheHarness.seedSale(STOCK);
@@ -48,7 +50,7 @@ describe('order persistence pipeline (real worker)', () => {
 
   async function reserveFor(saleId: string): Promise<ReservationRef> {
     const ref = await cacheHarness.reserve(saleId, `buyer-${randomUUID()}`);
-    orderIds.push(ref.orderId);
+    refs.push(ref);
     return ref;
   }
 
@@ -68,8 +70,9 @@ describe('order persistence pipeline (real worker)', () => {
   });
 
   afterAll(async () => {
-    for (const orderId of orderIds) {
-      await (await queue.getJob(orderId))?.remove();
+    for (const ref of refs) {
+      await (await queue.getJob(orderPersistenceJobId(ref)))?.remove();
+      await (await queue.getJob(orderCompensationJobId(ref)))?.remove();
     }
     await app.close();
     await db.close();

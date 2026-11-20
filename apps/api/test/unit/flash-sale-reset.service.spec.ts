@@ -1,3 +1,4 @@
+import { ServiceUnavailableException } from '@nestjs/common';
 import type { ClockService } from '../../src/common/providers/clock.service';
 import { FlashSaleResetService } from '../../src/modules/admin/services/flash-sale-reset.service';
 import { ACTIVE_FLASH_SALE_ID } from '../../src/modules/flash-sales/constants/flash-sales.constants';
@@ -48,10 +49,14 @@ function buildService(): {
   rescheduleCampaign: jest.Mock<Promise<FlashSaleCampaign>, [RescheduleCampaignParams]>;
   replaceSaleState: jest.Mock<Promise<void>, [SaleLedgerState]>;
   discardSaleOrders: jest.Mock<Promise<void>, [string]>;
+  resumeProcessing: jest.Mock<Promise<void>, []>;
 } {
   const calls: string[] = [];
   const discardSaleOrders = jest.fn(async (_saleId: string) => {
     calls.push('discardSaleOrders');
+  });
+  const resumeProcessing = jest.fn(async () => {
+    calls.push('resumeProcessing');
   });
   const rescheduleCampaign = jest.fn(async (params: RescheduleCampaignParams) => {
     calls.push('rescheduleCampaign');
@@ -74,7 +79,7 @@ function buildService(): {
     }),
   } as unknown as FlashSalesService;
   const orders = { replaceSaleState } as unknown as OrdersService;
-  const persistence = { discardSaleOrders } as unknown as OrderPersistenceService;
+  const persistence = { discardSaleOrders, resumeProcessing } as unknown as OrderPersistenceService;
   const clock = { nowMs: (): number => NOW_MS } as unknown as ClockService;
   const service = new FlashSaleResetService(
     products,
@@ -84,11 +89,18 @@ function buildService(): {
     persistence,
     clock,
   );
-  return { service, calls, rescheduleCampaign, replaceSaleState, discardSaleOrders };
+  return {
+    service,
+    calls,
+    rescheduleCampaign,
+    replaceSaleState,
+    discardSaleOrders,
+    resumeProcessing,
+  };
 }
 
 describe('FlashSaleResetService', () => {
-  it('discards orders, reschedules, replaces the ledger, drops the micro-cache, then reads the status', async () => {
+  it('discards orders, reschedules, replaces the ledger, drops the micro-cache, resumes the queue, then reads the status', async () => {
     const { service, calls } = buildService();
 
     await service.reset({});
@@ -98,8 +110,31 @@ describe('FlashSaleResetService', () => {
       'rescheduleCampaign',
       'replaceSaleState',
       'invalidateCache',
+      'resumeProcessing',
       'getCurrentStatus',
     ]);
+  });
+
+  it('resumes the queue and rethrows when the discard times out waiting for active jobs', async () => {
+    const { service, calls, discardSaleOrders, resumeProcessing } = buildService();
+    discardSaleOrders.mockRejectedValue(new ServiceUnavailableException());
+
+    const outcome = service.reset({});
+
+    await expect(outcome).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(resumeProcessing).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual(['resumeProcessing']);
+  });
+
+  it('resumes the queue and rethrows when a later step throws', async () => {
+    const { service, calls, replaceSaleState, resumeProcessing } = buildService();
+    replaceSaleState.mockRejectedValue(new Error('redis down'));
+
+    const outcome = service.reset({});
+
+    await expect(outcome).rejects.toThrow('redis down');
+    expect(resumeProcessing).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual(['discardSaleOrders', 'rescheduleCampaign', 'resumeProcessing']);
   });
 
   it('targets the active sale for both the discard and the reschedule', async () => {

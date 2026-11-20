@@ -23,7 +23,8 @@ import { OrdersRepository } from '../../src/modules/orders/repositories/orders.r
 import { FEATURED_PRODUCT_ID } from '../../src/modules/products/constants/products.constants';
 import { userIdOf } from './user-id.fixtures';
 
-const SALE_JOB_STATES = ['wait', 'paused', 'delayed', 'active', 'failed', 'completed'] as const;
+/** States from which a job can still run. A reset drains these; finished jobs are history. */
+const RUNNABLE_JOB_STATES = ['wait', 'paused', 'delayed', 'active'] as const;
 
 export interface RealSaleHarness {
   moduleRef: TestingModule;
@@ -39,7 +40,7 @@ export interface RealSaleHarness {
   persistOrder(user: string): Promise<ReservationRef>;
   deleteSaleRedisKeys(): Promise<void>;
   deleteSaleRows(): Promise<void>;
-  queuedJobCount(): Promise<number>;
+  runnableJobCount(): Promise<number>;
   close(): Promise<void>;
 }
 
@@ -86,9 +87,9 @@ export async function createRealSaleHarness(): Promise<RealSaleHarness> {
       await dataSource.query('DELETE FROM flash_sales WHERE id = $1', [ACTIVE_FLASH_SALE_ID]);
       await dataSource.query('DELETE FROM products WHERE id = $1', [FEATURED_PRODUCT_ID]);
     },
-    queuedJobCount: async () => {
-      const counts = await queue.getJobCounts(...SALE_JOB_STATES);
-      return SALE_JOB_STATES.reduce((total, state) => total + counts[state], 0);
+    runnableJobCount: async () => {
+      const counts = await queue.getJobCounts(...RUNNABLE_JOB_STATES);
+      return RUNNABLE_JOB_STATES.reduce((total, state) => total + counts[state], 0);
     },
     close: async () => {
       await queue.resume();

@@ -41,14 +41,23 @@ export type LedgerHydrationResult = 'HYDRATED' | 'ALREADY_PRESENT';
 /** NOT_RESERVED: entry absent, CONFIRMED, or held by another orderId. Nothing changed. */
 export type ReleaseOutcome = 'RELEASED' | 'NOT_RESERVED';
 
+/** CONFIRMED: PostgreSQL already held the order, so the entry was confirmed instead of released. */
+export type CompensationOutcome = 'CONFIRMED' | ReleaseOutcome;
+
 /**
  * QUEUED: the job is in ORDER_PERSISTENCE_QUEUE.
  * RELEASED: enqueue failed and the reservation was rolled back (stock restored).
  */
 export type ScheduleReservationOutcome = 'QUEUED' | 'RELEASED';
 
-/** `orderId` is the stored row's id, which is the job's orderId unless a row already existed. */
+/**
+ * `orderId` is the stored row's id, which is the job's orderId unless a row already existed.
+ * STALE: the reservation was released or wiped before the job ran; nothing was written.
+ */
 export interface PersistOrderResult {
-  outcome: 'INSERTED' | 'ALREADY_PERSISTED';
+  outcome: 'INSERTED' | 'ALREADY_PERSISTED' | 'STALE';
   orderId: string;
 }
+
+/** What a job on ORDER_PERSISTENCE_QUEUE returns, whichever job name it carries. */
+export type OrderJobResult = PersistOrderResult | CompensationOutcome;

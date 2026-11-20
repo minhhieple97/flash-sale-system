@@ -7,7 +7,7 @@ import { FlashSalesService } from '../../flash-sales/services/flash-sales.servic
 import { OrderPersistenceService } from '../../orders/services/order-persistence.service';
 import { OrdersService } from '../../orders/services/orders.service';
 import { ProductsService } from '../../products/services/products.service';
-import type { ResetFlashSaleInput } from '../interfaces/admin.interface';
+import type { ResetFlashSaleInput, ResetFlashSalePlan } from '../interfaces/admin.interface';
 import { resolveResetPlan } from '../utils/reset-plan.util';
 import { buildSaleSnapshot } from '../utils/sale-snapshot.util';
 
@@ -23,10 +23,24 @@ export class FlashSaleResetService {
     private readonly clock: ClockService,
   ) {}
 
-  /** Order matters: the ledger is replaced before the micro-cache is dropped, so the next read is fresh. */
+  /**
+   * The discard pauses order processing and waits out in-flight jobs. Processing resumes only once
+   * the new sale state is in Redis, so a late job meets the new state and ends STALE; the `finally`
+   * resumes it even when a step fails.
+   */
   async reset(input: ResetFlashSaleInput): Promise<FlashSaleStatus> {
     const plan = resolveResetPlan(input, this.clock.nowMs());
-    await this.orderPersistence.discardSaleOrders(ACTIVE_FLASH_SALE_ID);
+    try {
+      await this.orderPersistence.discardSaleOrders(ACTIVE_FLASH_SALE_ID);
+      await this.rebuildSale(plan);
+    } finally {
+      await this.orderPersistence.resumeProcessing();
+    }
+    return this.flashSales.getCurrentStatus();
+  }
+
+  /** Order matters: the ledger is replaced before the micro-cache is dropped, so the next read is fresh. */
+  private async rebuildSale(plan: ResetFlashSalePlan): Promise<void> {
     const campaign = await this.campaigns.rescheduleCampaign({
       saleId: ACTIVE_FLASH_SALE_ID,
       totalStock: plan.totalStock,
@@ -38,6 +52,5 @@ export class FlashSaleResetService {
     const snapshot = buildSaleSnapshot({ product, campaign, remainingStock: plan.totalStock });
     await this.orders.replaceSaleState({ snapshot, confirmed: [] });
     this.flashSales.invalidateCache();
-    return this.flashSales.getCurrentStatus();
   }
 }

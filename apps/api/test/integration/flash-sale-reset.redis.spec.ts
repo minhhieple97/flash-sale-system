@@ -86,8 +86,9 @@ describe('FlashSaleResetService against the real containers', () => {
     expect(rows).toHaveLength(0);
   });
 
-  it('empties the persistence queue', async () => {
-    await expect(harness.queuedJobCount()).resolves.toBe(0);
+  it('drains every job that could still run and leaves the queue resumed', async () => {
+    await expect(harness.runnableJobCount()).resolves.toBe(0);
+    await expect(harness.queue.isPaused()).resolves.toBe(false);
   });
 
   it('clears the purchase ledger and resets stock in Redis', async () => {
