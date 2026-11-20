@@ -2,7 +2,7 @@
 
 Status: implemented (Phase 3.4). The storefront scenario drawer (`reset-drawer`) is Phase 4.5 and is reported as `not implemented (Phase 4.5)` until it lands.
 
-A reviewer puts the sale into a known scenario with one call, and the API rebuilds its fast state from the database after a cold start. The reset discards the queued persistence jobs (BullMQ `obliterate` with `force`), deletes the sale's orders, rewrites the campaign row and the Redis state, and drops the 200 ms status cache, so the next status read is fresh. Boot hydration seeds the sample product and campaign when missing and restores remaining stock as total minus confirmed orders.
+A reviewer puts the sale into a known scenario with one call, and the API rebuilds its fast state from the database after a cold start. The reset pauses the persistence queue, waits for jobs in flight, discards the waiting and delayed ones, deletes the sale's orders, rewrites the campaign row and the Redis state, and drops the 200 ms status cache, so the next status read is fresh. Boot hydration seeds the sample product and campaign when missing and restores remaining stock as total minus confirmed orders.
 
 ## Sub-features
 
@@ -33,7 +33,8 @@ Preconditions:
 
 ## Gotchas
 
-- A reset is not linearizable with concurrent purchases. Reset before traffic, never during a stress run.
+- A purchase made against the old state while a reset runs gets 202, but its job finds the reservation gone and writes nothing, so that buyer ends with `NONE`. Reset before traffic, never during a stress run.
+- A reset answers 503 `TEMPORARY_FAILURE` when persistence jobs stay in flight for 10 s. The queue is resumed either way, and `docker compose exec -T redis redis-cli HEXISTS bull:order-persistence:meta paused` prints `0` afterwards.
 - `productName` changes the sale status only (the Redis config). It does not edit the stored product row, so when Redis later loses its keys, boot hydration shows the stored name again.
 - The reset gives every user a clean slate by design: it deletes the sale's orders in PostgreSQL as well as the Redis entries.
 - Hydration is a check, then a write, and is not atomic across several API instances. The compose stack runs one instance and hydration finishes before the listener opens, so the window does not open there.
