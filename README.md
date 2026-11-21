@@ -1,8 +1,8 @@
 # Flash sale system
 
-A backend for a flash sale that sells one limited product to many buyers at once. Each buyer gets at most one unit, and the sale never sells more units than it has. The API is NestJS on Fastify. Redis decides who gets a unit, PostgreSQL stores the orders, and a BullMQ queue moves each reservation from one to the other.
+A flash sale that sells one limited product to many buyers at once. Each buyer gets at most one unit, and the sale never sells more units than it has. The API is NestJS on Fastify. Redis decides who gets a unit, PostgreSQL stores the orders, and a BullMQ queue moves each reservation from one to the other. The storefront is React 19 with Tailwind CSS 4, served by nginx in Docker.
 
-Status: the API is complete through the purchase path, order lookup, and admin reset (Phases 1 to 3). The stress suite (Phase 5) and the Docker stack (Phase 6) run, with measured results below. The React storefront (Phase 4) is not built yet, so the web container serves only the page heading.
+Status: all six phases are built. The API covers the purchase path, order lookup, and admin reset (Phases 1 to 3). The React storefront (Phase 4) drives every endpoint from the browser. The stress suite (Phase 5) and the Docker stack (Phase 6) run, with measured results below.
 
 ## How a purchase works
 
@@ -57,6 +57,26 @@ All routes except `/health` live under `/api/v1`.
 
 The API trims and lowercases user ids, so `" Alice@Example.com "` and `alice@example.com` are the same buyer.
 
+## The storefront
+
+The page at `/` has five parts, one per feature module in `apps/web/src/modules/`.
+
+| Module | What the buyer sees |
+| --- | --- |
+| `product` | The product card with its SKU, a "Limited Edition" badge, "Limit 1 Per Customer", the flash price, the struck-through original price and the discount |
+| `flash-sale` | The `Sale status` card with a color-coded state pill, a countdown to the start or the end, and an animated stock bar |
+| `checkout` | The `Checkout` card with a user id field, a "Random Test User" button and "Buy Now", plus a banner for each outcome |
+| `orders` | The `Order lookup` card, and the confirmation poller that turns a reservation into a receipt |
+| `simulation` | The "Demo scenarios" toolbar at the bottom of the page, for reviewers |
+
+The status card polls `GET /api/v1/flash-sales/current` every 2 seconds. The countdown does not trust the browser clock. Each response carries `serverTime`, and the page counts down from `serverTime` plus the time elapsed since, so a laptop clock that is hours off still shows the right seconds.
+
+"Buy Now" is locked while the sale is not `ACTIVE`, while a request is in flight, and while the user id is blank. After a 202 the checkout card polls `GET /api/v1/orders/user/:userId` every 400 ms. It stops on the first answer that ends the wait. `CONFIRMED` shows a verified receipt with the order id. `NONE` means the reservation was released, by compensation or a reset. After 75 attempts (about 30 seconds) the card says the order is still confirming and points to the lookup card. 409, 410 and 422 each get their own banner with the server's message.
+
+The scenario toolbar resets the sale through the admin endpoint with four presets: an active sale with 100 units for an hour, high scarcity with 3 units, a sale that starts in 15 seconds, and one that ended an hour ago. The reset response goes straight into the status card, so the page switches without waiting for the next poll. The checkout and lookup cards remount, which drops stale banners and pollers.
+
+The page calls relative `/api/v1` paths. In development Vite proxies `/api` and `/health` to the API, and in Docker nginx does, so the API needs no CORS.
+
 ## Run it locally
 
 You need pnpm 12, Node 22.22 or 24.15 or later (pnpm 12 refuses older Node), and Docker.
@@ -70,6 +90,11 @@ pnpm --filter @flash-sale/api start
 ```
 
 The API creates its tables on boot, seeds the sample product and a sale that is open for 24 hours with 100 units, and listens on `PORT` (3000 by default).
+
+```sh
+pnpm --filter @flash-sale/web dev   # http://localhost:5173, proxies /api and /health to http://127.0.0.1:3000
+VITE_API_PROXY_TARGET=http://127.0.0.1:3001 pnpm --filter @flash-sale/web dev   # when the API runs on another port
+```
 
 ## Run the full stack in Docker
 
@@ -89,12 +114,15 @@ The API image is a two-stage build on `node:24-alpine`. The build stage installs
 pnpm --filter @flash-sale/api test:unit         # no containers needed
 pnpm --filter @flash-sale/api test:integration  # needs the postgres and redis containers
 pnpm --filter @flash-sale/api test:e2e          # the HTTP end-to-end suites only
+pnpm --filter @flash-sale/web test              # Vitest and React Testing Library, no containers needed
 pnpm verify                                     # lint, typecheck, build and every test
 ```
 
 Stop the API container (`docker compose stop api web`) before you run the integration suites or `pnpm verify`. They share the compose PostgreSQL, Redis, and queue name, and a running API container's worker would take the suites' jobs.
 
 The integration suites run against the real PostgreSQL 16 and Redis 7 containers, read the root `.env`, and run one file at a time because they share one queue. The end-to-end suites boot the whole application and drive it over HTTP. Jest exits cleanly under `--detectOpenHandles` without `--forceExit`. On shutdown the worker and queue close before the Redis connection, and `shutdown-order.redis.spec.ts` fails if that order breaks.
+
+The web specs sit in each module's `__tests__/` folder and stub only `fetch`, so every test runs the real HTTP client, hooks and components. Timer behavior (the 2-second status poll, the 400 ms confirmation poll, the countdown under a skewed clock) runs on Vitest's fake timers. The verify skill in `.claude/skills/verify/` also drives the running storefront through Playwright, including a run with the browser clock an hour ahead.
 
 ## Concurrency results
 
@@ -161,6 +189,9 @@ Fault injection shows the checks can fail. A stray order row inserted into Postg
 - **The order id is the job id.** BullMQ refuses custom job ids that contain `:`, so `saleId:userId` cannot work. The order id is unique per reservation, so the same user can buy again after a reset without colliding with an old job.
 - **Rollback is scoped to one order.** The rollback script releases a unit only while the entry still equals `RESERVED:<orderId>`. Repeating it, or running it after the order was confirmed or the user reserved again, changes nothing.
 - **The module graph has no cycles.** Checkout depends on orders, and admin depends on products, flash sales and orders. Rollback lives in the orders module, so orders never needs checkout.
+- **The browser treats rejections as values too.** The web HTTP client never throws. It returns `{ ok: true, data }` or `{ ok: false, status, error }`, and a network failure becomes status 0 with `NETWORK_ERROR`. Hooks hold their state in discriminated unions such as `idle | loading | success | error`, so a component cannot render a receipt and an error at once.
+- **One polling primitive.** `usePolling` runs a task, waits for it to finish, then schedules the next run, so a slow response never overlaps the next request. The task returns `continue` or `stop`, which ends confirmation polling on the response that says `CONFIRMED`, not one render later.
+- **Web modules talk through their barrels.** A module imports another only through its `index.ts`, and a lint rule fails any deeper import. Checkout imports the confirmation poller from orders, the same direction as the API's checkout to orders edge.
 
 ## Known limits and tradeoffs
 
@@ -169,6 +200,8 @@ Fault injection shows the checks can fail. A stray order row inserted into Postg
 - **Boot hydration is a check and then a write.** It is not atomic across several API instances. It runs once per boot, before the server accepts requests, and the compose stack runs one API instance.
 - **Reset is a demo tool.** It pauses the persistence queue, waits up to 10 seconds for jobs in flight (503 if they do not finish), discards the waiting and delayed jobs, rebuilds the sale, and resumes the queue. If the process dies in the middle, the next boot resumes the queue. A purchase that reserves against the old state while the reset runs gets 202, but its job finds the reservation gone, so that buyer ends with no order. The reset has no authentication beyond the `ENABLE_ADMIN_ENDPOINTS` switch. `productName` changes only the cached sale, not the stored product.
 - **The system runs one sale.** The active sale id is a constant.
+- **The storefront polls instead of being pushed to.** Sale status can be up to 2 seconds old, plus the 200 ms server cache. When stock runs out, "Buy Now" stays enabled until the next poll, and a click in that gap gets the 410 banner. Server-sent events would close the gap at the cost of a connection per open page.
+- **The countdown offset can be up to 200 ms off.** It comes from `serverTime`, and a status served from the 200 ms cache carries the time it was computed.
 
 ## Repository layout
 
@@ -186,7 +219,11 @@ apps/api/src/
 apps/api/test/
   unit/              one spec per class, collaborators mocked
   integration/       real PostgreSQL and Redis; *.e2e-spec.ts boot the whole app
-apps/web/            React storefront (Phase 4)
+apps/web/src/
+  app/               App shell, layout, error boundary
+  shared/            HTTP client, polling hook, Card, Alert, StatusPill, currency format
+  modules/           product, flash-sale, checkout, orders, simulation; each has
+                     api/, hooks/, components/, types/, constants/, __tests__/ and an index.ts barrel
 tests/stress/        scenario table, k6 scripts, zero-dependency Node runner
 ```
 
