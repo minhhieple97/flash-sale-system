@@ -65,6 +65,40 @@ describe('OrderCacheRepository', () => {
     });
   });
 
+  describe('listReservations', () => {
+    it('returns the RESERVED entries as refs and skips CONFIRMED ones', async () => {
+      const saleId = await seedSale(5);
+      const alice = await reserve(saleId, 'alice');
+      await cache.markConfirmed(await reserve(saleId, 'bob'));
+
+      const refs = await cache.listReservations(saleId);
+
+      expect(refs).toEqual([alice]);
+    });
+
+    it('returns nothing for a sale without a users hash', async () => {
+      const refs = await cache.listReservations(harness.newSaleId());
+
+      expect(refs).toEqual([]);
+    });
+
+    it('walks a users hash larger than one scan batch, each entry once', async () => {
+      const saleId = await seedSale(5);
+      const entries = Array.from({ length: 1200 }, (_, index) => [`user-${index}`, randomUUID()]);
+      await redis.hset(
+        flashSaleUsersKey(saleId),
+        Object.fromEntries(entries.map(([user, orderId]) => [user, `RESERVED:${orderId}`])),
+      );
+
+      const refs = await cache.listReservations(saleId);
+
+      expect(refs).toHaveLength(entries.length);
+      expect(new Set(refs.map((ref) => ref.orderId))).toEqual(
+        new Set(entries.map(([, orderId]) => orderId)),
+      );
+    });
+  });
+
   describe('markConfirmed', () => {
     it('is idempotent', async () => {
       const saleId = await seedSale(5);

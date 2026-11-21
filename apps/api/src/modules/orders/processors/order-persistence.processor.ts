@@ -42,7 +42,7 @@ export class OrderPersistenceProcessor extends WorkerHost implements OnModuleDes
     const { orderId } = job.data;
     if (job.name === ORDER_COMPENSATION_JOB_NAME) {
       this.logger.error(
-        `Compensation for order ${orderId} exhausted its retries; the reservation stays held until a reset`,
+        `Compensation for order ${orderId} exhausted its retries; the reservation stays held until the next boot or a reset`,
       );
       return;
     }

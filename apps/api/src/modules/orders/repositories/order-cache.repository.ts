@@ -10,6 +10,7 @@ import {
   ROLLBACK_PURCHASE_REPLY,
 } from '../../../infrastructure/redis/redis.constants';
 import type { FlashSaleRedis } from '../../../infrastructure/redis/redis.interfaces';
+import { RESERVATION_SCAN_COUNT } from '../constants/orders.constants';
 import type {
   ConfirmedReservation,
   LedgerHydrationResult,
@@ -36,6 +37,14 @@ function parseEntry(raw: string | null): ReservationSlot {
     return { status, orderId };
   }
   throw new Error(`Corrupt reservation entry with an unknown prefix: ${raw}`);
+}
+
+/** HSCAN replies alternate field and value. HSCAN may repeat a field; the map keeps it once. */
+function collectReserved(fieldsAndValues: readonly string[], into: Map<string, string>): void {
+  for (let index = 0; index < fieldsAndValues.length; index += 2) {
+    const slot = parseEntry(fieldsAndValues[index + 1]);
+    if (slot.status === 'RESERVED') into.set(fieldsAndValues[index], slot.orderId);
+  }
 }
 
 function toConfirmedEntries(confirmed: readonly ConfirmedReservation[]): Record<string, string> {
@@ -70,6 +79,27 @@ export class OrderCacheRepository {
   /** A value with an unknown prefix throws. */
   async findSlot(saleId: string, userId: NormalizedUserId): Promise<ReservationSlot> {
     return parseEntry(await this.redis.hget(flashSaleUsersKey(saleId), userId));
+  }
+
+  /** The RESERVED entries of a sale, as refs. CONFIRMED entries are skipped. */
+  async listReservations(saleId: string): Promise<ReservationRef[]> {
+    const reserved = new Map<string, string>();
+    let cursor = '0';
+    do {
+      const [next, fieldsAndValues] = await this.redis.hscan(
+        flashSaleUsersKey(saleId),
+        cursor,
+        'COUNT',
+        RESERVATION_SCAN_COUNT,
+      );
+      collectReserved(fieldsAndValues, reserved);
+      cursor = next;
+    } while (cursor !== '0');
+    return [...reserved].map(([userId, orderId]) => ({
+      saleId,
+      userId: userId as NormalizedUserId,
+      orderId,
+    }));
   }
 
   /** Idempotent. */

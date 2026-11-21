@@ -38,7 +38,13 @@ describe('OrderPersistenceService against the real order-persistence queue', () 
       providers: [
         OrderPersistenceService,
         { provide: OrdersRepository, useValue: {} },
-        { provide: OrderCacheRepository, useValue: { releaseReservation } },
+        {
+          provide: OrderCacheRepository,
+          useValue: {
+            releaseReservation,
+            listReservations: async (): Promise<ReservationRef[]> => [],
+          },
+        },
       ],
     }).compile();
     await moduleRef.init();

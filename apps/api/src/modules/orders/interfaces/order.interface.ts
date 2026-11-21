@@ -59,5 +59,14 @@ export interface PersistOrderResult {
   orderId: string;
 }
 
+/**
+ * Boot reconciliation of one sale. `pending`: RESERVED entries left to a job that can still run.
+ * `orphans`: what compensation did with each RESERVED entry that had none.
+ */
+export interface ReconciliationSummary {
+  pending: number;
+  orphans: Record<CompensationOutcome, number>;
+}
+
 /** What a job on ORDER_PERSISTENCE_QUEUE returns, whichever job name it carries. */
 export type OrderJobResult = PersistOrderResult | CompensationOutcome;

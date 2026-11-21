@@ -140,7 +140,7 @@ describe('OrderPersistenceProcessor', () => {
       expect(scheduleCompensation).not.toHaveBeenCalled();
       expect(error).toHaveBeenCalledTimes(1);
       expect(String(error.mock.calls[0][0])).toContain(REF.orderId);
-      expect(String(error.mock.calls[0][0])).toContain('until a reset');
+      expect(String(error.mock.calls[0][0])).toContain('until the next boot or a reset');
     });
 
     it('does nothing for a compensation job while attempts remain', async () => {

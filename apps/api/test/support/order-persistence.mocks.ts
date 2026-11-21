@@ -1,4 +1,4 @@
-import type { Queue } from 'bullmq';
+import type { JobState, Queue } from 'bullmq';
 import type { NormalizedUserId } from '../../src/common/interfaces/user-id.interface';
 import type {
   PersistOrderResult,
@@ -29,6 +29,7 @@ function queueMocks(calls: string[]) {
   return {
     add: jest.fn<Promise<unknown>, unknown[]>(),
     getJob: jest.fn<Promise<unknown>, [string]>(async () => undefined),
+    getJobState: jest.fn<Promise<JobState | 'unknown'>, [string]>(async () => 'unknown'),
     pause: recorded<void, []>(calls, 'pause', undefined),
     resume: recorded<void, []>(calls, 'resume', undefined),
     drain: recorded<void, [boolean?]>(calls, 'drain', undefined),
@@ -52,6 +53,7 @@ function ordersMocks(calls: string[]) {
 
 function cacheMocks(calls: string[]) {
   return {
+    listReservations: jest.fn<Promise<ReservationRef[]>, [string]>(async () => []),
     findSlot: jest.fn<Promise<ReservationSlot>, [string, NormalizedUserId]>(async () => ({
       status: 'RESERVED',
       orderId: PERSISTENCE_REF.orderId,
@@ -71,8 +73,8 @@ export interface PersistenceServiceMocks {
 
 /**
  * OrderPersistenceService over jest mocks of the queue and both repositories. Defaults: every queue
- * command succeeds with no active jobs, the slot holds PERSISTENCE_REF as RESERVED, and PostgreSQL
- * holds no order for the user.
+ * command succeeds with no active jobs and no job is stored, the sale has no RESERVED entries to
+ * reconcile, the slot holds PERSISTENCE_REF as RESERVED, and PostgreSQL holds no order for the user.
  */
 export function buildPersistenceService(): PersistenceServiceMocks {
   const calls: string[] = [];

@@ -1,4 +1,4 @@
-import type { JobsOptions } from 'bullmq';
+import type { JobState, JobsOptions } from 'bullmq';
 import type { ReservationRef } from '../interfaces/order.interface';
 
 export const ORDERS_ROUTE = 'orders';
@@ -33,6 +33,21 @@ export const ORDER_COMPENSATION_JOB_OPTIONS = {
 } as const satisfies JobsOptions;
 /** Same ':' restriction as the persistence job id; the prefix keeps the two ids apart. */
 export const orderCompensationJobId = (ref: ReservationRef): string => `compensate-${ref.orderId}`;
+
+/**
+ * Job states from which a job can still run. `completed` jobs are removed (`removeOnComplete`) and
+ * read as `unknown`; `failed` means the retries are spent.
+ */
+export const PENDING_JOB_STATES: ReadonlySet<JobState | 'unknown'> = new Set([
+  'waiting',
+  'delayed',
+  'active',
+  'prioritized',
+  'waiting-children',
+]);
+
+/** HSCAN batch size hint when boot reconciliation walks a sale's users hash. */
+export const RESERVATION_SCAN_COUNT = 500;
 
 /** An admin reset waits this long for in-flight persistence jobs before answering 503. */
 export const RESET_ACTIVE_JOBS_POLL_MS = 25;
