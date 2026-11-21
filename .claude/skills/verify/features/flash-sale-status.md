@@ -21,7 +21,7 @@ A shopper sees whether the sale is upcoming, active, sold out or ended, with rem
 Preconditions:
 
 - The baseline preconditions in README.md hold.
-- The admin endpoint is enabled (`ENABLE_ADMIN_ENDPOINTS=true`, the default).
+- The admin endpoint is enabled (`ENABLE_ADMIN_ENDPOINTS=true`). The schema default is `false`; `.env.example` and docker-compose turn it on.
 
 - **Missing.** After boot, delete the key (`docker compose exec -T redis redis-cli DEL flash_sale:00000000-0000-4000-8000-000000000001:config`) and wait 250 ms. With no `flash_sale:00000000-0000-4000-8000-000000000001:config` key in Redis, run `.claude/skills/verify/bin/http.sh flash-sale-status missing GET /api/v1/flash-sales/current`. Status 404, `code` `FLASH_SALE_NOT_FOUND`.
 - **States.** Reset through the admin endpoint. Active: `.claude/skills/verify/bin/http.sh flash-sale-status reset-active POST /api/v1/admin/flash-sales/reset '{"totalStock":100,"startsOffsetSeconds":-60,"durationSeconds":3600}'`, then read it with `.claude/skills/verify/bin/http.sh flash-sale-status read-active GET /api/v1/flash-sales/current`. Do the same for each state below, naming the calls `reset-<state>` and `read-<state>`. Upcoming: `'{"startsOffsetSeconds":15,"durationSeconds":3600}'`. Ended: `'{"startsOffsetSeconds":-7200,"durationSeconds":3600}'`. Sold out: `'{"totalStock":0}'`, or drive stock to 0 through checkout (checkout-purchase.md).
