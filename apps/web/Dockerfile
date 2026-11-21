@@ -1,10 +1,12 @@
 FROM node:24-alpine AS builder
 RUN npm install -g pnpm@12.16.1
+ENV PNPM_HOME=/pnpm
 WORKDIR /repo
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
-RUN pnpm install --frozen-lockfile --filter @flash-sale/web...
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm install --frozen-lockfile --filter @flash-sale/web...
 COPY apps/web apps/web
 RUN pnpm --filter @flash-sale/web build
 

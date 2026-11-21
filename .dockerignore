@@ -6,3 +6,5 @@
 .env
 *.md
 todo.md
+.verify-evidence
+.verify-run
