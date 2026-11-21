@@ -9,6 +9,8 @@ Two layers. The **gate** proves the code is healthy. The **drive** proves the ru
 
 Helpers live in `.claude/skills/verify/bin/`. Run them from the repo root. All are executable.
 
+`pnpm verify`, `launch.sh` and `ui.sh` need Node 24 or later first on `PATH` (`nvm use` reads `.nvmrc`). This machine's default shell has Node 18, where pnpm stops with `ERR_PNPM_BAD_RUNTIME_VERSION` (the root `devEngines.runtime`). `launch.sh` and `ui.sh` refuse up front and name the version they found.
+
 ## Gate
 
 ```bash
@@ -34,9 +36,9 @@ One `PASS`/`FAIL` line per check, then `VERIFY OK` (exit 0) or `VERIFY FAILED: <
 .claude/skills/verify/bin/launch.sh
 ```
 
-1. Refuses if `.verify-run/` exists or a target port is already bound (by anything).
+1. Refuses if `node` on `PATH` is older than 24, if `.verify-run/` exists, or if a target port is already bound (by anything).
 2. `docker compose up -d postgres redis`, waits until both are `healthy`.
-3. Builds the API, starts `node apps/api/dist/main.js` with `PORT=$VERIFY_API_PORT` (default `3100`).
+3. Builds the API (a failed build prints the tail of `.verify-run/api-build.log`), starts `node apps/api/dist/main.js` with `PORT=$VERIFY_API_PORT` (default `3100`).
 4. Starts Vite dev for the web on `127.0.0.1:$VERIFY_WEB_PORT` (default `5180`, `--strictPort`) with `VITE_API_PROXY_TARGET=$API_URL`, so the page's relative `/api` and `/health` calls reach this run's API the same way nginx proxies them in Docker.
 5. Ready means usable. The API answers `GET /health` (outside the `/api/v1` prefix) with 2xx, which requires both `SELECT 1` and Redis `PING` to succeed. Nest runs every `OnModuleInit`, including `SchemaConstraintsInitializer`, before it listens, so a 2xx also means the schema and its constraints exist. The web serves the page with `<div id="root">`.
 6. Prints `READY run=<id> api=<url> web=<url> evidence=<dir>`.

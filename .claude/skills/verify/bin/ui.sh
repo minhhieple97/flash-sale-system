@@ -7,5 +7,6 @@ if [ "$#" -lt 3 ]; then
   exit 2
 fi
 feature="$1" name="$2" steps="$3"
+require_node24
 dir="$(evidence_dir "$feature")"
 node "$(dirname "${BASH_SOURCE[0]}")/ui.mjs" "$dir" "$WEB_URL" "$name" "$steps"
