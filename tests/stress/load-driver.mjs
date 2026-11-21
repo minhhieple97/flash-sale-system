@@ -1,6 +1,6 @@
 import { monitorEventLoopDelay } from 'node:perf_hooks';
-import { orderStatus, postJson } from './http-client.mjs';
-import { metricForStatus, RESERVED_STATUS, RESET_PATH } from './scenarios.mjs';
+import { orderStatus, postJson, request } from './http-client.mjs';
+import { HEALTH_PATH, metricForStatus, RESERVED_STATUS, RESET_PATH } from './scenarios.mjs';
 import { CONFIRMED_STATUS } from './store-keys.mjs';
 
 const DRAIN_TIMEOUT_MS = Number(process.env.DRAIN_TIMEOUT_MS || 30000);
@@ -39,8 +39,21 @@ async function sendOne(result, userId) {
   }
 }
 
+/**
+ * Opens one keep-alive socket per worker before the timed burst, so the server's one-accept-per-
+ * event-loop-iteration wait stays out of the purchase latency (see k6-purchase.mjs).
+ */
+async function warmConnections(count) {
+  const startedAt = performance.now();
+  await Promise.all(Array.from({ length: count }, () => request('GET', HEALTH_PATH)));
+  return performance.now() - startedAt;
+}
+
 export async function fire(scenario) {
   const result = { counts: {}, latenciesMs: [], reserved: [], wallMs: 0 };
+  if (scenario.shouldWarmConnections) {
+    result.warmupMs = await warmConnections(scenario.concurrency);
+  }
   let next = 0;
   const worker = async () => {
     while (next < scenario.requests) {

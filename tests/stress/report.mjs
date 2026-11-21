@@ -20,6 +20,11 @@ export function printReport({ scenario, result, latency, checks }) {
   console.log(
     `requests=${scenario.requests} concurrency=${scenario.concurrency} wall=${fmt(seconds)}s`,
   );
+  const warmup =
+    result.warmupMs === undefined
+      ? 'connections opened cold, inside the timed burst'
+      : `${scenario.concurrency} keep-alive sockets warmed in ${fmt(result.warmupMs)}ms (not timed)`;
+  console.log(`client node ${process.version}, ${warmup}`);
   console.log(`throughput=${fmt(scenario.requests / seconds)} req/s`);
   console.log(
     `latency ms p50=${fmt(latency.p50)} p95=${fmt(latency.p95)} p99=${fmt(latency.p99)} max=${fmt(latency.max)}`,

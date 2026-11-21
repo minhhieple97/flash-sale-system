@@ -8,6 +8,7 @@ export const EXPECTED_STATUSES = Object.keys(STATUS_METRICS).map(Number);
 export const UNEXPECTED_5XX = 'unexpected_5xx';
 export const METRIC_NAMES = [...Object.values(STATUS_METRICS), UNEXPECTED_5XX];
 
+export const HEALTH_PATH = '/health';
 export const RESET_PATH = '/api/v1/admin/flash-sales/reset';
 export const PURCHASE_PATH = '/api/v1/checkout/purchase';
 export const ORDER_LOOKUP_PATH = '/api/v1/orders/user';
@@ -32,7 +33,11 @@ export const SCENARIOS = {
     concurrency: 250,
     userIdFor: (i) => `stress-buyer-${i}`,
     expected: { reserved_202: 100, sold_out_410: 4900 },
+    // Opens every connection before its first purchase, so the latency budgets measure purchases
+    // instead of the API's one-accept-per-event-loop-iteration queue (see k6-purchase.mjs).
+    shouldWarmConnections: true,
     p95BudgetMs: 250,
+    p99BudgetMs: 500,
   },
   sameUserRace: {
     name: 'same-user-race',
@@ -42,6 +47,9 @@ export const SCENARIOS = {
     userIdFor: (i) => RACER_VARIANTS[i % RACER_VARIANTS.length],
     normalizedUserId: 'stress-racer@example.com',
     expected: { reserved_202: 1, conflict_409: 299 },
+    // Fires cold on purpose: the race wants all 300 requests to land at once, and it has no budget.
+    shouldWarmConnections: false,
     p95BudgetMs: null,
+    p99BudgetMs: null,
   },
 };
