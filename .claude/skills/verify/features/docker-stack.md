@@ -10,7 +10,7 @@ An operator builds and starts the whole system with one Compose command. Postgre
 - `stack-up` starts all four services. The API's healthcheck gates the web and k6 services.
 - `api-published` serves `GET /health` on host port `PORT` (default 3000).
 - `web-served` serves the web build on host port `WEB_PORT` (default 8080).
-- `web-proxy` forwards `/api/*` and `/health` from nginx to `api:3000`.
+- `web-proxy` forwards `/api/*` and `/health` from nginx to `api:3000` over pooled keep-alive connections. nginx re-resolves `api` every 10 s, so a recreated API answers through the proxy again within a few seconds (3.6 s measured).
 
 ## How to get to it (user POV)
 
