@@ -43,7 +43,7 @@ One `PASS`/`FAIL` line per check, then `VERIFY OK` (exit 0) or `VERIFY FAILED: <
 5. Ready means usable. The API answers `GET /health` (outside the `/api/v1` prefix) with 2xx, which requires both `SELECT 1` and Redis `PING` to succeed. Nest runs every `OnModuleInit`, including `SchemaConstraintsInitializer`, before it listens, so a 2xx also means the schema and its constraints exist. The web serves the page with `<div id="root">`.
 6. Prints `READY run=<id> api=<url> web=<url> evidence=<dir>`.
 
-Host port 3000 belongs to another local process on this machine, which is why verification never uses it. Each process runs in its own process group recorded in `.verify-run/{api,web}.pgid`, with logs in `.verify-run/*.log`.
+Verification runs on 3100 and 5180, never on the compose stack's default ports (3000 for the API, 8080 for the web), so a stack already published there is left alone. Each process runs in its own process group recorded in `.verify-run/{api,web}.pgid`, with logs in `.verify-run/*.log`.
 
 Phase 3 hydration runs in `OnApplicationBootstrap`, also before listen, so the same `/health` wait covers it. If seeding ever moves off the boot path, extend `launch.sh` to wait for it and say so here.
 
@@ -80,7 +80,7 @@ Read [features/README.md](features/README.md), then follow the matching feature 
 | `{"snap": "name"}` | full-page DOM + screenshot |
 | `{"scrollSnap": "name"}` | viewport screenshot after scrolling to the bottom |
 
-`in` scopes a step to the region with that accessible name. The storefront's regions are `Sale status`, `Checkout` and `Order lookup`. The run writes `<name>.steps.log` with one `PASS`/`FAIL` line per step, every page error, console error and HTTP response of 400 or above. It also writes `<name>.dom.html` and `<name>.png`, or a `<name>.failure.*` capture at the failing step, and it exits 1 on failure.
+`in` scopes a step to the region with that accessible name. The storefront's regions are `Sale status`, `Checkout` and `Order lookup`. The run writes `<name>.steps.log` with one `PASS`/`FAIL` line per step, every page error, console error and HTTP response of 400 or above. A journey that provokes a 4xx on purpose (`buy-duplicate`, `lookup-invalid`) logs that `HTTP` line and a matching `CONSOLE-ERROR`: that is the response being proved, not a failure. It also writes `<name>.dom.html` and `<name>.png`, or a `<name>.failure.*` capture at the failing step, and it exits 1 on failure.
 
 ## Evidence
 
@@ -94,7 +94,15 @@ Proof standards:
 
 ## Isolation
 
-API and web instances isolate by port (`VERIFY_API_PORT`, `VERIFY_WEB_PORT`). Postgres and Redis do not isolate: there is one compose project (`flash-sale`) and one database. Two concurrent runs that reset the sale or purchase stock corrupt each other's results. Do not drive mutating features in parallel. Do not touch containers outside the `flash-sale` compose project. The compose `api` container runs a BullMQ worker on the same queue as the jest integration suites, so stop it (`docker compose stop api web`) before running the gate. The gate enforces this with the `compose api stopped` check.
+API and web instances isolate by port (`VERIFY_API_PORT`, `VERIFY_WEB_PORT`). By default Postgres and Redis do not isolate: there is one compose project (`flash-sale`) and one database. Two concurrent runs that reset the sale or purchase stock corrupt each other's results. Do not drive mutating features in parallel. Do not touch containers outside the compose project you are driving. The compose `api` container runs a BullMQ worker on the same queue as the jest integration suites, so stop it (`docker compose stop api web`) before running the gate. The gate enforces this with the `compose api stopped` check.
+
+When another session is using the shared stack (its api container is up, or a stress run is going), do not stop it and do not reset its sale. Run on a private compose project instead:
+
+```bash
+export COMPOSE_PROJECT_NAME=flash-sale-audit POSTGRES_PORT=55432 REDIS_PORT=56379 PORT=3101 WEB_PORT=8181
+```
+
+Values in the environment beat the root `.env` and the compose file's `name:`. With them exported, `launch.sh`, `doctor.sh`, `pnpm verify`, every `docker compose` command in `features/` and `pnpm stress:*` act on a project with its own Postgres, Redis, volumes, queue and api container, and the feature files' ports 3001 and 8080 are `PORT` and `WEB_PORT`. The gate's `compose api stopped` check then looks at that project, whose queue the suites share. Tear it down with `docker compose down -v --rmi local`, which removes only that project. On 2026-11-21 the whole gate, every feature and the stress suite ran this way while the shared stack stayed up.
 
 ## Cleanup
 

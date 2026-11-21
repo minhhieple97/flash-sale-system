@@ -28,6 +28,10 @@ container_health() {
   docker inspect -f '{{.State.Health.Status}}' "$id"
 }
 
+service_healthy() {
+  [ "$(container_health "$1")" = healthy ]
+}
+
 wait_for() {
   local label="$1" timeout="$2"
   shift 2

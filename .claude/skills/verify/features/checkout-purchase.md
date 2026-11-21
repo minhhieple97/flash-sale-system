@@ -42,5 +42,5 @@ Preconditions:
 
 - Orders persist asynchronously through BullMQ. Poll the Postgres count for a few seconds before calling it missing.
 - Concurrency is proven by the e2e suite and `tests/stress`, not by this journey. Do not fire parallel buys here.
-- The env file on this machine maps Redis to host port 6380. `docker compose exec` avoids caring about that.
+- Redis's host port is the `REDIS_PORT` of the root `.env`, which differs per machine. `docker compose exec` avoids caring about it.
 - The form cannot reliably produce a 410 or 422, because `Buy Now` locks as soon as the 2 s poll reports `SOLD_OUT`, `UPCOMING` or `ENDED`. Only a click that beats the poll reaches those codes. `CheckoutFormCard.spec.tsx` covers their banners, and the API steps above cover the statuses.

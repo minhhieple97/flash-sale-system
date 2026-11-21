@@ -19,8 +19,8 @@ mkdir -p "$STATE_DIR"
 date +%Y%m%d-%H%M%S >"$STATE_DIR/run-id"
 
 docker compose up -d postgres redis >"$STATE_DIR/infra.log" 2>&1
-wait_for "postgres healthy" 90 test "$(container_health postgres)" = healthy
-wait_for "redis healthy" 90 test "$(container_health redis)" = healthy
+wait_for "postgres healthy" 90 service_healthy postgres
+wait_for "redis healthy" 90 service_healthy redis
 
 pnpm --filter @flash-sale/api build >"$STATE_DIR/api-build.log" 2>&1 || { tail -20 "$STATE_DIR/api-build.log" >&2; exit 1; }
 
