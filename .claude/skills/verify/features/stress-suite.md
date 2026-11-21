@@ -29,7 +29,7 @@ A reviewer fires thousands of purchase attempts at the running stack and checks 
 
 Preconditions:
 
-- The stack is up and healthy, with the API on host port 3001 (`PORT=3001 docker compose up -d --build --wait`).
+- The stack is up and healthy, with the API on host port 3001 (`PORT=3001 docker compose up -d --build --wait`), or on a private stack's `PORT` (SKILL.md, Isolation), which no other session shares.
 - Nothing else is resetting the sale or buying stock. Every scenario starts with an admin reset. Other sessions and worktrees share this Postgres, Redis and queue: check `docker compose exec -T redis redis-cli CLIENT LIST` for clients that are neither the api container nor `127.0.0.1`, and agree on a window first.
 - The shell's `node` is the repo's Node (`nvm use` reads `.nvmrc`, 24). `pnpm stress:node` runs whatever `node` is first on `PATH`, and this machine's default shell has 18.17.1. On it, pnpm stops with `ERR_PNPM_BAD_RUNTIME_VERSION` because the root `devEngines.runtime` requires Node 24 or later.
 
@@ -38,7 +38,7 @@ Preconditions:
 - **Node runner.** `BASE_URL=http://localhost:3001 pnpm stress:node` prints `client node v24...` with `250 keep-alive sockets warmed in <n>ms` for oversell and `connections opened cold` for the race, then throughput, latency, the client's event-loop delay, the counts, 27 `PASS` lines, and `STRESS OK` with exit 0.
 - **The checks can fail.** Run the runner while a background command inserts a stray order one second in:
   `(sleep 1; docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "INSERT INTO orders (id, flash_sale_id, product_id, user_id) SELECT gen_random_uuid(), id, product_id, '"'"'mutant-user'"'"' FROM flash_sales"') &`
-  It ends `STRESS FAILED` with `FAIL PG order ids equal 202 order ids pg 101, 202s 100`. For k6, copy `tests/stress` to a scratch directory, change `reserved_202: 100` to `99` in its `scenarios.mjs`, and run k6 with that copy mounted at `/scripts`. It exits 99 with `✗ 'count==99' count=100`. In a copy whose `run()` skips `warmConnection()`, the opening-wave wait lands in the purchase latency again. k6 exited 99 with `✗ 'p(99)<500'` in 3 of 4 runs, with p99 between 1.3 and 5.9 s. In the fourth run, fewer than 1% of requests were stuck (p99 138 ms, max 1.08 s).
+  It ends `STRESS FAILED` with `FAIL PG order ids equal 202 order ids pg 101, 202s 100`, and the `remaining_stock` and `conservation` checks fail with it. For k6, copy `tests/stress` to a scratch directory, change `reserved_202: 100` to `99` in its `scenarios.mjs`, and run k6 with that copy mounted at `/scripts`. It exits 99 with `✗ 'count==99' count=100`. In a copy whose `run()` skips `warmConnection()`, the opening-wave wait lands in the purchase latency again. k6 exited 99 with `✗ 'p(99)<500'` in 3 of 4 runs, with p99 between 1.3 and 5.9 s. In the fourth run, fewer than 1% of requests were stuck (p99 138 ms, max 1.08 s).
 - **Proof.** Save the full output of each run under `.verify-evidence/<run-id>/stress/`, and report the THRESHOLDS blocks and the runner's PASS/FAIL lines.
 
 ## Gotchas

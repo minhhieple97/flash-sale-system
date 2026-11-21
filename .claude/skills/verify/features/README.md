@@ -31,7 +31,7 @@ Each feature file starts with an H1 title, a status line, and one paragraph desc
 ## Features
 
 Implemented (Phases 1 to 6):
-- [Storefront shell](./storefront-shell.md) covers the web page loading, React rendering the app heading, and the composed storefront.
+- [Storefront shell](./storefront-shell.md) covers the web page loading, React rendering the app heading, the composed storefront, and the card error states when the API is down.
 - [API HTTP surface](./api-http-surface.md) covers the `/api/v1` prefix and the `{ code, message }` error body.
 - [Health](./health.md) covers `GET /health` with its Postgres and Redis checks.
 - [Featured product](./products-featured.md) covers `GET /api/v1/products/featured`.

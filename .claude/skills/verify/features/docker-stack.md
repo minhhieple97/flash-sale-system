@@ -21,7 +21,7 @@ An operator builds and starts the whole system with one Compose command. Postgre
 
 Preconditions:
 
-- Host port 3000 is held by another local process on this machine, so publish the API on 3001: prefix every `docker compose up` with `PORT=3001`.
+- The commands below publish the API on 3001 (`PORT=3001`) and the web on 8080 (the `WEB_PORT` default). Do not run `docker compose up` with a different `PORT` against a stack another session already published: it recreates the API container on the new port. On a private stack (SKILL.md, Isolation) read 3001 and 8080 as its `PORT` and `WEB_PORT`.
 - No `.verify-run/` instance needs to exist. This feature drives the containers, not `launch.sh`.
 
 - **Build and start.** Run `PORT=3001 docker compose up -d --build --wait`. It exits 0 once postgres, redis and api report healthy. `docker compose ps` shows `api ... (healthy) 0.0.0.0:3001->3000/tcp` and `web ... 0.0.0.0:8080->80/tcp`.
