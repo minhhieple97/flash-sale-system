@@ -65,7 +65,7 @@ Read [features/README.md](features/README.md), then follow the matching feature 
 
 `browser.sh` runs `google-chrome --headless=new` with a throwaway profile. `--dump-dom` captures the DOM after React renders, so a heading present there and absent from `index.html` proves client rendering. It cannot click or type.
 
-`ui.sh` drives the storefront through `playwright-core` (a pinned web devDependency) on the system Chrome. It needs Node 20 or later on `PATH`. It runs a JSON array of steps in order, one key per step:
+`ui.sh` drives the storefront through `playwright-core` (a pinned web devDependency) on the system Chrome. It needs Node 24 or later on `PATH`, which `nvm use` provides. It runs a JSON array of steps in order, one key per step:
 
 | Step | Effect |
 |---|---|

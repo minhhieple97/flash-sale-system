@@ -6,7 +6,8 @@
 ## 1. Package Manager & Workspace Rules (`pnpm 12.x` Exclusively)
 
 1. **Exclusively Use `pnpm` (`12.x`):** Use **`pnpm` version `>=12.0.0 <13.0.0`** (e.g., `pnpm@12.22.0`) with `pnpm-workspace.yaml` for all dependency installations, script executions, and Docker builds.
-   * Declare `"engines": { "node": ">=20.0.0", "pnpm": ">=12.0.0 <13.0.0" }` and pin an exact `"packageManager": "pnpm@12.x.x"` matching the installed `pnpm 12.x` binary in the root `package.json`.
+   * Declare `"engines": { "node": ">=24.0.0", "pnpm": ">=12.0.0 <13.0.0" }` and pin an exact `"packageManager": "pnpm@12.x.x"` matching the installed `pnpm 12.x` binary in the root `package.json`.
+   * **Node 24 or later everywhere.** The root `package.json` also declares `"devEngines": { "runtime": { "name": "node", "version": ">=24.0.0", "onFail": "error" } }`, because `engines` alone does not stop the native corepack `pnpm` on an older Node. With it, `pnpm install` and `pnpm run` fail with `ERR_PNPM_BAD_RUNTIME_VERSION`. Each workspace package (`@flash-sale/api`, `@flash-sale/web`) declares the same `"engines": { "node": ">=24.0.0" }`, `.nvmrc` pins `24`, every Docker base image is `node:24-alpine`, and `@types/node` stays on the 24.x line.
 2. **`pnpm 12` Workspace Strictness (`pnpm-workspace.yaml`):**
    * `pnpm 12` rejects unknown configuration keys in `pnpm-workspace.yaml` and enforces `strictDepBuilds: true` by default (`ERR_PNPM_IGNORED_BUILDS`).
    * Use `pnpm 12`'s **`allowBuilds`** map in `pnpm-workspace.yaml` (e.g., `allowBuilds: { esbuild: true, '@swc/core': true }`) to explicitly whitelist or block lifecycle build scripts. **Do NOT** use deprecated legacy keys such as `onlyBuiltDependencies` or `ignoredBuiltDependencies`.
@@ -155,6 +156,7 @@ apps/web/src/
 
 After each TDD slice, run the relevant tests and checks. Before completing an implementation change, run the full applicable checks below when the workspace and scripts exist. If a check cannot run, report why rather than claiming it passed.
 
+* [ ] `node --version` reports **`v24` or later** (`nvm use` reads `.nvmrc`).
 * [ ] `pnpm --version` confirms **`12.x.x` (`>=12.0.0 <13.0.0`)** and `pnpm-workspace.yaml` uses valid `pnpm 12` schema (`allowBuilds`).
 * [ ] Every feature slice followed **RED $\rightarrow$ GREEN $\rightarrow$ REFACTOR** (failing spec observed prior to implementation).
 * [ ] `pnpm -r test` (Backend Jest + Frontend Vitest) passes with **100% green suites**.
