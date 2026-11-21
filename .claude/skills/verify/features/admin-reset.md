@@ -1,6 +1,6 @@
 # Admin reset and boot hydration
 
-Status: implemented (Phase 3.4). The storefront scenario drawer (`reset-drawer`) is Phase 4.5 and is reported as `not implemented (Phase 4.5)` until it lands.
+Status: implemented (Phase 3.4). The storefront scenario drawer (`reset-drawer`) is implemented in Phase 4.5.
 
 A reviewer puts the sale into a known scenario with one call, and the API rebuilds its fast state from the database after a cold start. The reset pauses the persistence queue, waits for jobs in flight, discards the waiting and delayed ones, deletes the sale's orders, rewrites the campaign row and the Redis state, and drops the 200 ms status cache, so the next status read is fresh. Boot hydration seeds the sample product and campaign when missing and restores remaining stock as total minus confirmed orders.
 
@@ -10,13 +10,13 @@ A reviewer puts the sale into a known scenario with one call, and the API rebuil
 - `reset-validate` answers 400 for an unknown field or an out-of-range value.
 - `reset-clears` removes the previous buyers, so a user who bought can buy again.
 - `boot-hydrate` rebuilds Redis from PostgreSQL after the Redis keys are lost, then the API restarts.
-- `reset-drawer` shows the four scenario presets on the storefront (Phase 4.5).
+- `reset-drawer` is the `Demo scenarios` toolbar fixed to the bottom of the storefront. It has four presets: `Active Sale` (100 units, 1 h), `High Scarcity` (3 units), `Upcoming Countdown` (starts in 15 s) and `Ended Sale` (closed an hour ago). A preset posts its payload, the banner switches at once without waiting for a poll, and the checkout and lookup cards clear.
 
 ## How to get to it (user POV)
 
 - `POST http://127.0.0.1:3100/api/v1/admin/flash-sales/reset` with a JSON body.
 - Restarting the API process with Redis data missing (hydration runs before the listener opens).
-- The scenario drawer at the bottom of the storefront (Phase 4.5).
+- The `Demo scenarios` toggle at the bottom of the storefront.
 
 ## Driving it with verify/bin
 
@@ -29,7 +29,8 @@ Preconditions:
 - **Validate.** Run it with `'{"totalStock":5,"oops":1}'` as `bad-field` and `'{"totalStock":-1}'` as `bad-stock`. Both are status 400.
 - **Clears buyers.** Buy as `alice@example.com` (checkout-purchase.md), reset with `'{}'`, run the lookup for `alice@example.com`. Status 200, `status` `NONE`. Buying again gives 202.
 - **Boot hydration.** Buy once as `alice@example.com` and wait until the lookup says `CONFIRMED`. Run `.claude/skills/verify/bin/cleanup.sh`. Delete the three keys with `docker compose exec -T redis redis-cli DEL flash_sale:00000000-0000-4000-8000-000000000001:config flash_sale:00000000-0000-4000-8000-000000000001:stock flash_sale:00000000-0000-4000-8000-000000000001:users`. Run `.claude/skills/verify/bin/launch.sh`. Read `GET /api/v1/flash-sales/current` as `after-boot`: `remainingStock` is 99 of 100. The lookup for alice is still `CONFIRMED` with the same `orderId`, and buying as alice gives 409.
-- **Proof.** Keep the response bodies, plus `redis-cli GET flash_sale:00000000-0000-4000-8000-000000000001:stock` and the `psql` order count after the boot-hydration step.
+- **Drawer.** Run `.claude/skills/verify/bin/ui.sh admin-reset reset-drawer '[{"goto":"/"},{"click":{"name":"Demo scenarios"}},{"click":{"name":"High Scarcity"}},{"expect":{"text":"Live scenario: High Scarcity"}},{"expect":{"text":"Live now","exact":true,"in":"Sale status"}},{"expect":{"text":"3 of 3 left","in":"Sale status"}},{"scrollSnap":"reset-drawer-bottom"}]'`, then read `GET /api/v1/flash-sales/current` as `drawer-read`, which shows `totalStock` 3. `reset-drawer-bottom.png` shows the order lookup card clear of the open drawer.
+- **Proof.** Keep the response bodies, plus `redis-cli GET flash_sale:00000000-0000-4000-8000-000000000001:stock` and the `psql` order count after the boot-hydration step, and the drawer step log and screenshots.
 
 ## Gotchas
 

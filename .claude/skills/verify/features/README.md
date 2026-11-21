@@ -11,7 +11,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 ## Driving conventions
 
 - API actions go through `.claude/skills/verify/bin/http.sh <feature> <name> <METHOD> <path> [json-body]`.
-- Page proofs go through `.claude/skills/verify/bin/browser.sh <feature> <name> <path>`.
+- Page proofs go through `.claude/skills/verify/bin/browser.sh <feature> <name> <path>`, and storefront interactions through `.claude/skills/verify/bin/ui.sh <feature> <name> '<steps-json>'` (SKILL.md lists the step vocabulary).
 - Prefer ARIA roles and accessible names (`heading "Flash Sale"`) over CSS classes.
 - Treat paths, user IDs and JSON bodies as literal.
 - Mutating journeys start by resetting the sale through the admin endpoint (once it exists), not by editing Redis or Postgres by hand.
@@ -19,7 +19,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 ## Proof and skip reporting
 
 - API proof is the request, the status, the headers and the body, all written by `http.sh`.
-- UI proof is the rendered DOM plus a screenshot, both written by `browser.sh`.
+- UI proof is the rendered DOM plus a screenshot, written by `browser.sh`, and for interactions the `ui.sh` step log as well.
 - Mutation proof includes a second read-only view of the stored state.
 - Record the feature ID and entry point used with every artifact.
 - A planned feature that is not implemented yet is reported as `not implemented (Phase N)`, never as passing.
@@ -30,8 +30,8 @@ Each feature file starts with an H1 title, a status line, and one paragraph desc
 
 ## Features
 
-Implemented (Phases 1 to 3, 5 and 6):
-- [Storefront shell](./storefront-shell.md) covers the web page loading and React rendering the app heading.
+Implemented (Phases 1 to 6):
+- [Storefront shell](./storefront-shell.md) covers the web page loading, React rendering the app heading, and the composed storefront.
 - [API HTTP surface](./api-http-surface.md) covers the `/api/v1` prefix and the `{ code, message }` error body.
 - [Health](./health.md) covers `GET /health` with its Postgres and Redis checks.
 - [Featured product](./products-featured.md) covers `GET /api/v1/products/featured`.
@@ -42,4 +42,4 @@ Implemented (Phases 1 to 3, 5 and 6):
 - [Containerized stack](./docker-stack.md) covers `docker compose up -d --build`, the API on its published port, and the nginx web container with its `/api` proxy.
 - [Stress suite](./stress-suite.md) covers the two k6 scripts and the Node runner with its PostgreSQL and Redis checks.
 
-Storefront sub-features of these files (`buy-form`, `lookup-card`, `status-banner`, `reset-drawer`) are planned for Phases 4.2 to 4.5 and are reported as `not implemented (Phase N)` until they land.
+Each API feature file also carries its storefront sub-feature, driven with `ui.sh`: `product-card` (Phase 4.1), `status-banner` (4.2), `buy-form` (4.3 and 4.4), `lookup-card` (4.4) and `reset-drawer` (4.5).

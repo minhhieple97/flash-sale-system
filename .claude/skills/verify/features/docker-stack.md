@@ -1,6 +1,6 @@
 # Containerized stack
 
-Status: implemented (Phase 6.1 to 6.2). The storefront inside the web container is still the Phase 1 shell until Phase 4 lands.
+Status: implemented (Phase 6.1 to 6.2). The web container serves the Phase 4 storefront.
 
 An operator builds and starts the whole system with one Compose command. PostgreSQL, Redis, the API image, and the nginx web image come up in dependency order. The API answers `/health` on its published port, and the web container serves the built storefront and proxies `/api/` and `/health` to the API over the Compose network.
 

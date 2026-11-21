@@ -1,6 +1,6 @@
 # Order lookup
 
-Status: API implemented (Phase 3.2). The storefront card and confirmation poller (`lookup-card`) are Phase 4.4 and are reported as `not implemented (Phase 4.4)` until they land.
+Status: API implemented (Phase 3.2). The storefront card and the confirmation poller (`lookup-card`) are implemented in Phase 4.4.
 
 A shopper checks whether they hold an order. Until the worker persists the order they see `RESERVED`, then `CONFIRMED` with the same order ID. The worker usually finishes within milliseconds, so the first lookup after a purchase normally already shows `CONFIRMED`. A user who never bought sees `NONE`.
 
@@ -9,12 +9,12 @@ A shopper checks whether they hold an order. Until the worker persists the order
 - `lookup-none` returns `hasPurchased: false`, `status: "NONE"`, `orderId: null`.
 - `lookup-confirmed` returns `CONFIRMED` with the `orderId` from the purchase response.
 - `lookup-normalized` finds the same order for case and whitespace variants of the user ID.
-- `lookup-card` shows the receipt in the storefront order lookup card (Phase 4.4).
+- `lookup-card` is the `Order lookup` card: a `User ID` field and `Check order`. `CONFIRMED` shows `Order confirmed` with a `Verified receipt`, `RESERVED` shows `Reserved, awaiting confirmation`, `NONE` shows `No order found for <id>`, and an error shows `Lookup failed` with the API message.
 
 ## How to get to it (user POV)
 
 - `GET http://127.0.0.1:3100/api/v1/orders/user/<userId>`.
-- The order lookup card on the storefront, and the automatic confirmation poller after a purchase (Phase 4.4).
+- The `Order lookup` card on the storefront, and the confirmation poller inside the `Checkout` card after a purchase.
 
 ## Driving it with verify/bin
 
@@ -27,7 +27,8 @@ Preconditions:
 - **Confirmed.** Poll `.claude/skills/verify/bin/http.sh order-lookup alice GET /api/v1/orders/user/alice@example.com` until `status` is `CONFIRMED` (at most 10 s). The `orderId` equals the one in that purchase body.
 - **Normalized.** Run it with `ALICE@Example.com` as `alice-upper`. Same `orderId`.
 - **Invalid.** Run `.claude/skills/verify/bin/http.sh order-lookup invalid GET '/api/v1/orders/user/a!'`. Status 400, `code` `INVALID_USER_ID`.
-- **Proof.** Keep `nobody`, `alice`, `alice-upper` and `invalid` bodies, and quote the matching order IDs.
+- **Card.** After the checkout form journey, run `.claude/skills/verify/bin/ui.sh order-lookup lookup-confirmed '[{"goto":"/"},{"fill":{"label":"User ID","value":"ALICE@Example.com","in":"Order lookup"}},{"click":{"name":"Check order","in":"Order lookup"}},{"expect":{"text":"Order confirmed","in":"Order lookup"}},{"expect":{"text":"Verified receipt","in":"Order lookup"}}]'`. Repeat with `nobody@example.com` as `lookup-none`, expecting `No order found for nobody@example.com`, and with `a!` as `lookup-invalid`, expecting `Lookup failed`.
+- **Proof.** Keep `nobody`, `alice`, `alice-upper` and `invalid` bodies, quote the matching order IDs, and keep the `lookup-*` step logs and screenshots.
 
 ## Gotchas
 

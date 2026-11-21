@@ -37,7 +37,7 @@ One `PASS`/`FAIL` line per check, then `VERIFY OK` (exit 0) or `VERIFY FAILED: <
 1. Refuses if `.verify-run/` exists or a target port is already bound (by anything).
 2. `docker compose up -d postgres redis`, waits until both are `healthy`.
 3. Builds the API, starts `node apps/api/dist/main.js` with `PORT=$VERIFY_API_PORT` (default `3100`).
-4. Starts Vite dev for the web on `127.0.0.1:$VERIFY_WEB_PORT` (default `5180`, `--strictPort`).
+4. Starts Vite dev for the web on `127.0.0.1:$VERIFY_WEB_PORT` (default `5180`, `--strictPort`) with `VITE_API_PROXY_TARGET=$API_URL`, so the page's relative `/api` and `/health` calls reach this run's API the same way nginx proxies them in Docker.
 5. Ready means usable. The API answers `GET /health` (outside the `/api/v1` prefix) with 2xx, which requires both `SELECT 1` and Redis `PING` to succeed. Nest runs every `OnModuleInit`, including `SchemaConstraintsInitializer`, before it listens, so a 2xx also means the schema and its constraints exist. The web serves the page with `<div id="root">`.
 6. Prints `READY run=<id> api=<url> web=<url> evidence=<dir>`.
 
@@ -60,9 +60,25 @@ Read [features/README.md](features/README.md), then follow the matching feature 
 ```bash
 .claude/skills/verify/bin/http.sh <feature> <name> <METHOD> <path> [json-body]   # API call, records request/headers/body
 .claude/skills/verify/bin/browser.sh <feature> <name> <path-or-url>              # headless Chrome: rendered DOM + screenshot
+.claude/skills/verify/bin/ui.sh <feature> <name> '<steps-json>'                  # Playwright: click, type, assert, capture
 ```
 
-`browser.sh` runs `google-chrome --headless=new` with a throwaway profile. `--dump-dom` captures the DOM after React renders, so a heading present there and absent from `index.html` proves client rendering. It cannot click or type. When a feature needs interaction (Phase 4 forms and buttons), add Playwright as a web devDependency, add an interaction helper here, and update the feature files.
+`browser.sh` runs `google-chrome --headless=new` with a throwaway profile. `--dump-dom` captures the DOM after React renders, so a heading present there and absent from `index.html` proves client rendering. It cannot click or type.
+
+`ui.sh` drives the storefront through `playwright-core` (a pinned web devDependency) on the system Chrome. It needs Node 20 or later on `PATH`. It runs a JSON array of steps in order, one key per step:
+
+| Step | Effect |
+|---|---|
+| `{"clockSkewMs": n}` | shifts the page's `Date` by `n` ms while timers keep running. Put it before `goto` |
+| `{"goto": "/"}` | opens a path on the web URL |
+| `{"click": {"name", "role"?, "in"?}}` | clicks by role (default `button`) and exact accessible name |
+| `{"fill": {"label", "value", "in"?}}` | types into the field with that exact label |
+| `{"expect": {"text", "exact"?, "in"?, "timeoutMs"?}}` | waits until the text is visible (default 10 s, substring unless `exact`) |
+| `{"disabled": {"name", "value"?, "in"?}}` | waits until the button's disabled state equals `value` (default `true`) |
+| `{"snap": "name"}` | full-page DOM + screenshot |
+| `{"scrollSnap": "name"}` | viewport screenshot after scrolling to the bottom |
+
+`in` scopes a step to the region with that accessible name. The storefront's regions are `Sale status`, `Checkout` and `Order lookup`. The run writes `<name>.steps.log` with one `PASS`/`FAIL` line per step, every page error, console error and HTTP response of 400 or above. It also writes `<name>.dom.html` and `<name>.png`, or a `<name>.failure.*` capture at the failing step, and it exits 1 on failure.
 
 ## Evidence
 
