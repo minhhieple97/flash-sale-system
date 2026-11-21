@@ -2,6 +2,7 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 cd "$ROOT"
+require_node24
 
 if [ -d "$STATE_DIR" ]; then
   echo "refusing: $STATE_DIR exists (an instance from this skill may be running). Run doctor.sh, or cleanup.sh first." >&2
@@ -21,7 +22,7 @@ docker compose up -d postgres redis >"$STATE_DIR/infra.log" 2>&1
 wait_for "postgres healthy" 90 test "$(container_health postgres)" = healthy
 wait_for "redis healthy" 90 test "$(container_health redis)" = healthy
 
-pnpm --filter @flash-sale/api build >"$STATE_DIR/api-build.log" 2>&1
+pnpm --filter @flash-sale/api build >"$STATE_DIR/api-build.log" 2>&1 || { tail -20 "$STATE_DIR/api-build.log" >&2; exit 1; }
 
 PORT="$API_PORT" setsid node apps/api/dist/main.js >"$STATE_DIR/api.log" 2>&1 &
 echo $! >"$STATE_DIR/api.pgid"
