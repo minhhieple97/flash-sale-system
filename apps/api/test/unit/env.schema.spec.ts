@@ -17,8 +17,7 @@ describe('validateEnv', () => {
       NODE_ENV: 'production',
       LOG_LEVEL: 'warn',
       PORT: '4000',
-      ENABLE_ADMIN_ENDPOINTS: 'false',
-      RATE_LIMIT_ENABLED: 'true',
+      ENABLE_ADMIN_ENDPOINTS: 'true',
     });
 
     expect(env).toMatchObject({
@@ -28,21 +27,20 @@ describe('validateEnv', () => {
       POSTGRES_HOST: 'localhost',
       POSTGRES_PORT: 5432,
       REDIS_PORT: 6380,
-      ENABLE_ADMIN_ENDPOINTS: false,
-      RATE_LIMIT_ENABLED: true,
+      ENABLE_ADMIN_ENDPOINTS: true,
     });
   });
 
   it('applies defaults when optional variables are absent', () => {
     const env = validateEnv({ ...REQUIRED });
 
-    expect(env).toMatchObject({
-      NODE_ENV: 'development',
-      LOG_LEVEL: 'info',
-      PORT: 3000,
-      ENABLE_ADMIN_ENDPOINTS: true,
-      RATE_LIMIT_ENABLED: false,
-    });
+    expect(env).toMatchObject({ NODE_ENV: 'development', LOG_LEVEL: 'info', PORT: 3000 });
+  });
+
+  it('keeps the unauthenticated admin endpoints off when ENABLE_ADMIN_ENDPOINTS is unset', () => {
+    const env = validateEnv({ ...REQUIRED });
+
+    expect(env.ENABLE_ADMIN_ENDPOINTS).toBe(false);
   });
 
   it('parses the string "false" to boolean false', () => {

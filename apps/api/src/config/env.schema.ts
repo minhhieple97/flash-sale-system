@@ -42,8 +42,7 @@ class EnvironmentVariables implements AppEnv {
   @IsString() @IsNotEmpty() REDIS_HOST!: string;
   @Transform(toInteger) @IsInt() @Min(MIN_PORT) @Max(MAX_PORT) REDIS_PORT!: number;
 
-  @Transform(toBoolean) @IsBoolean() ENABLE_ADMIN_ENDPOINTS = true;
-  @Transform(toBoolean) @IsBoolean() RATE_LIMIT_ENABLED = false;
+  @Transform(toBoolean) @IsBoolean() ENABLE_ADMIN_ENDPOINTS = false;
 }
 
 export function validateEnv(raw: Record<string, unknown>): AppEnv {

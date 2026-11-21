@@ -12,5 +12,4 @@ export interface AppEnv {
   REDIS_HOST: string;
   REDIS_PORT: number;
   ENABLE_ADMIN_ENDPOINTS: boolean;
-  RATE_LIMIT_ENABLED: boolean;
 }

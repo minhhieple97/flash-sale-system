@@ -5,6 +5,7 @@ import request from 'supertest';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/app.setup';
 import { FlashSaleResetService } from '../../src/modules/admin/services/flash-sale-reset.service';
+import { DEFAULT_CAMPAIGN_TOTAL_STOCK } from '../../src/modules/flash-sales/constants/flash-sales.constants';
 
 describe('AppModule (e2e)', () => {
   let app: NestFastifyApplication;
@@ -76,6 +77,18 @@ describe('AppModule (e2e)', () => {
     expect(reset.body).toMatchObject({ saleState: 'ACTIVE', totalStock: 7, remainingStock: 7 });
     expect(current.status).toBe(200);
     expect(current.body).toMatchObject({ saleState: 'ACTIVE', totalStock: 7, remainingStock: 7 });
+  });
+
+  it('resets with every default when the request carries no body and no content-type', async () => {
+    const response = await request(app.getHttpServer()).post('/api/v1/admin/flash-sales/reset');
+
+    expect(response.request.getHeader('content-type')).toBeUndefined();
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      saleState: 'ACTIVE',
+      totalStock: DEFAULT_CAMPAIGN_TOTAL_STOCK,
+      remainingStock: DEFAULT_CAMPAIGN_TOTAL_STOCK,
+    });
   });
 
   it('answers 400 on an admin reset with an invalid body', async () => {
