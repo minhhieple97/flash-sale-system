@@ -185,4 +185,54 @@ describe('FlashSaleResetService', () => {
 
     expect(status).toBe(STATUS);
   });
+
+  describe('overlapping resets', () => {
+    const nextTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+    function holdNextDiscard(
+      discardSaleOrders: jest.Mock<Promise<void>, [string]>,
+      calls: string[],
+    ): { release(): void; fail(error: Error): void } {
+      let settle: (error?: Error) => void = () => undefined;
+      discardSaleOrders.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            calls.push('discardSaleOrders');
+            settle = (error) => (error ? reject(error) : resolve());
+          }),
+      );
+      return { release: () => settle(), fail: (error) => settle(error) };
+    }
+
+    it('starts the second discard only after the first reset resumed the queue', async () => {
+      const { service, calls, discardSaleOrders } = buildService();
+      const first = holdNextDiscard(discardSaleOrders, calls);
+
+      const firstReset = service.reset({});
+      const secondReset = service.reset({});
+      await nextTurn();
+      const callsWhileFirstHeld = [...calls];
+      first.release();
+      await Promise.all([firstReset, secondReset]);
+
+      expect(callsWhileFirstHeld).toEqual(['discardSaleOrders']);
+      expect(calls.indexOf('discardSaleOrders', 1)).toBeGreaterThan(
+        calls.indexOf('resumeProcessing'),
+      );
+    });
+
+    it('still runs the second reset when the first one rejects', async () => {
+      const { service, calls, discardSaleOrders } = buildService();
+      const first = holdNextDiscard(discardSaleOrders, calls);
+
+      const firstReset = service.reset({});
+      const secondReset = service.reset({});
+      await nextTurn();
+      first.fail(new ServiceUnavailableException());
+
+      await expect(firstReset).rejects.toBeInstanceOf(ServiceUnavailableException);
+      await expect(secondReset).resolves.toBe(STATUS);
+      expect(discardSaleOrders).toHaveBeenCalledTimes(2);
+    });
+  });
 });
