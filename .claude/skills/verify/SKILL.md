@@ -18,9 +18,11 @@ pnpm verify          # = bash .claude/skills/verify/bin/gate.sh
 | Check | Command |
 |---|---|
 | containers | postgres and redis compose services report `healthy` |
-| lint | `pnpm -r lint` (Biome `--error-on-warnings` + `scripts/verify-agent-limits.mjs`) |
+| lint | `pnpm lint` from the root: `biome check --error-on-warnings .` plus `scripts/verify-agent-limits.mjs`, both over `apps/`, `scripts/` and `tests/` |
+| checker tests | `pnpm test:scripts` (`node --test scripts/*.test.mjs`, the agent-limits checker's own suites) |
 | typecheck | `pnpm -r typecheck` |
-| api tests | `pnpm --filter @flash-sale/api exec jest --detectOpenHandles --forceExit`, failed if Jest reports any open handle. Runs both Jest projects: `unit` (no infrastructure) and `integration` (the compose postgres and redis, configured from the root `.env`) |
+| compose api stopped | fails when `docker compose ps -q --status running api` is non-empty; run `docker compose stop api web` |
+| api tests | `pnpm --filter @flash-sale/api exec jest --detectOpenHandles` under a 300 s `timeout` (no `--forceExit`, so a hang fails the step), failed if Jest reports any open handle. Runs both Jest projects: `unit` (no infrastructure) and `integration` (the compose postgres and redis, configured from the root `.env`) |
 | web tests | `pnpm --filter @flash-sale/web test` (Vitest) |
 | build | `pnpm -r build` |
 
@@ -74,7 +76,7 @@ Proof standards:
 
 ## Isolation
 
-API and web instances isolate by port (`VERIFY_API_PORT`, `VERIFY_WEB_PORT`). Postgres and Redis do not isolate: there is one compose project (`flash-sale`) and one database. Two concurrent runs that reset the sale or purchase stock corrupt each other's results. Do not drive mutating features in parallel. Do not touch containers outside the `flash-sale` compose project.
+API and web instances isolate by port (`VERIFY_API_PORT`, `VERIFY_WEB_PORT`). Postgres and Redis do not isolate: there is one compose project (`flash-sale`) and one database. Two concurrent runs that reset the sale or purchase stock corrupt each other's results. Do not drive mutating features in parallel. Do not touch containers outside the `flash-sale` compose project. The compose `api` container runs a BullMQ worker on the same queue as the jest integration suites, so stop it (`docker compose stop api web`) before running the gate. The gate enforces this with the `compose api stopped` check.
 
 ## Cleanup
 

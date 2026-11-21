@@ -33,9 +33,20 @@ run_step() {
   report "$name" $? "$log"
 }
 
+check_api_container_stopped() {
+  local log="$LOG_DIR/api-container.log" ids
+  ids="$(docker compose ps -q --status running api 2>"$log")"
+  if [ -n "$ids" ]; then
+    echo "the compose api container is running; its BullMQ worker consumes and fails the integration suites' jobs" >>"$log"
+    echo "run: docker compose stop api web" >>"$log"
+  fi
+  [ -z "$ids" ]
+  report "compose api container stopped" $? "$log"
+}
+
 check_jest_open_handles() {
   local log="$LOG_DIR/api-jest.log" rc
-  timeout 300 pnpm --filter @flash-sale/api exec jest --detectOpenHandles --forceExit >"$log" 2>&1
+  timeout 300 pnpm --filter @flash-sale/api exec jest --detectOpenHandles >"$log" 2>&1
   rc=$?
   if grep -qE 'Jest has detected the following|open handle' "$log"; then
     echo "open handles detected" >>"$log"
@@ -46,8 +57,10 @@ check_jest_open_handles() {
 
 check_container postgres
 check_container redis
-run_step "pnpm -r lint (biome + verify-agent-limits)" lint pnpm -r lint
+run_step "pnpm lint (biome + verify-agent-limits, whole repo)" lint pnpm lint
+run_step "pnpm test:scripts (agent-limits checker)" test-scripts pnpm test:scripts
 run_step "pnpm -r typecheck" typecheck pnpm -r typecheck
+check_api_container_stopped
 check_jest_open_handles
 run_step "web vitest" web-vitest pnpm --filter @flash-sale/web test
 run_step "pnpm -r build" build pnpm -r build

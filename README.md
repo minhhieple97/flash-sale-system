@@ -2,7 +2,7 @@
 
 A backend for a flash sale that sells one limited product to many buyers at once. Each buyer gets at most one unit, and the sale never sells more units than it has. The API is NestJS on Fastify. Redis decides who gets a unit, PostgreSQL stores the orders, and a BullMQ queue moves each reservation from one to the other.
 
-Status: the API is complete through the purchase path, order lookup, and admin reset (Phases 1 to 3). The React storefront (Phase 4), the k6 stress suite with latency numbers (Phase 5), and the full Docker stack with its final README (Phase 6) are not built yet.
+Status: the API is complete through the purchase path, order lookup, and admin reset (Phases 1 to 3). The stress suite (Phase 5) and the Docker stack (Phase 6) run, with measured results below. The React storefront (Phase 4) is not built yet, so the web container serves only the page heading.
 
 ## How a purchase works
 
@@ -59,7 +59,7 @@ The API trims and lowercases user ids, so `" Alice@Example.com "` and `alice@exa
 
 ## Run it locally
 
-You need Node 20 or later, pnpm 12, and Docker.
+You need pnpm 12, Node 22.22 or 24.15 or later (pnpm 12 refuses older Node), and Docker.
 
 ```sh
 cp .env.example .env          # change POSTGRES_PORT or REDIS_PORT if those ports are taken
@@ -71,6 +71,18 @@ pnpm --filter @flash-sale/api start
 
 The API creates its tables on boot, seeds the sample product and a sale that is open for 24 hours with 100 units, and listens on `PORT` (3000 by default).
 
+## Run the full stack in Docker
+
+```sh
+docker compose up -d --build --wait   # postgres, redis, api, web
+curl localhost:3000/health            # {"status":"ok","checks":{"database":"up","redis":"up"}}
+open http://localhost:8080            # nginx serves the web build and proxies /api and /health to the API
+```
+
+`--wait` returns once PostgreSQL, Redis, and the API report healthy. The API's healthcheck calls `/health`, and the web and k6 services start only after it passes. If host port 3000 is taken, run `PORT=3001 docker compose up -d --build --wait` and use port 3001 below. Pass the same `PORT` to every later `docker compose up`, or Compose recreates the API on the default port.
+
+The API image is a two-stage build on `node:24-alpine`. The build stage installs pnpm 12.16.1 with `npm install -g`, runs `pnpm install --frozen-lockfile` for the API's workspace slice, compiles, and runs `pnpm deploy --prod` to copy only production dependencies. The runtime stage holds `dist` and those dependencies, runs as the `node` user, and is 385 MB. The install keeps optional dependencies, so platform packages such as the musl build of `msgpackr-extract` are present and BullMQ's msgpackr reports native acceleration on Alpine. A BuildKit cache mount keeps the pnpm store between builds, so a rebuild after a dependency change downloads only the new packages. The base is Node 24 rather than Node 20 because pnpm 12.16.1 declares `node: ^22.22.2 || ^24.15.0 || >=26.0.0`, and Node 20 left support in April 2026.
+
 ## Tests
 
 ```sh
@@ -80,11 +92,13 @@ pnpm --filter @flash-sale/api test:e2e          # the HTTP end-to-end suites onl
 pnpm verify                                     # lint, typecheck, build and every test
 ```
 
+Stop the API container (`docker compose stop api web`) before you run the integration suites or `pnpm verify`. They share the compose PostgreSQL, Redis, and queue name, and a running API container's worker would take the suites' jobs.
+
 The integration suites run against the real PostgreSQL 16 and Redis 7 containers, read the root `.env`, and run one file at a time because they share one queue. The end-to-end suites boot the whole application and drive it over HTTP. Jest exits cleanly under `--detectOpenHandles` without `--forceExit`. On shutdown the worker and queue close before the Redis connection, and `shutdown-order.redis.spec.ts` fails if that order breaks.
 
 ## Concurrency results
 
-These counts check correctness only. Throughput and latency belong to the Phase 5 stress suite.
+These counts come from the Jest end-to-end suite and from early `curl` runs. The stress suite in the next section adds throughput and latency.
 
 | Run | Requests | Result |
 | --- | --- | --- |
@@ -92,6 +106,52 @@ These counts check correctness only. Throughput and latency belong to the Phase 
 | `flash-sale-race.e2e-spec.ts`, one Node process | 50 requests from one user | 1 × 202, 49 × 409 |
 | Live API, 80 parallel `curl` processes | 400 buyers, 10 units | 10 × 202, 390 × 410, Redis stock 0, 10 orders, `remaining_stock` 0 |
 | Live API, 80 parallel `curl` processes | 200 requests from one user in 4 case and space variants | 1 × 202, 199 × 409, 1 order |
+
+## Stress tests
+
+Both scenarios live in one table, `tests/stress/scenarios.mjs`, which the k6 scripts and the Node runner import. Each run starts with an admin reset.
+
+| Scenario | Stock | Requests | Concurrency | Pass condition |
+| --- | --- | --- | --- | --- |
+| `oversell` | 100 | 5,000 distinct buyers | 250 | exactly 100 × 202 and 4,900 × 410, no 409, no 5xx, k6 p95 under 250 ms |
+| `same-user-race` | 50 | 300 requests from one buyer in 4 case and whitespace variants | 100 | exactly 1 × 202 and 299 × 409, no 410, no 5xx |
+
+```sh
+pnpm stress:k6:oversell     # k6 1.8.3 in a container on the compose network, against the running stack
+pnpm stress:k6:same-user
+BASE_URL=http://localhost:3000 pnpm stress:node   # both scenarios, then checks PostgreSQL and Redis
+```
+
+The k6 scripts run with `--no-deps`, so they hit the stack you started and never recreate it. A broken threshold exits with code 99.
+
+The Node runner uses only Node built-ins. After firing a scenario it polls `GET /api/v1/orders/user/:userId` until every buyer who got 202 is `CONFIRMED`. That means the queue has persisted every reservation. It then reads PostgreSQL and Redis through `docker compose exec` and checks these facts:
+
+- The order ids in PostgreSQL equal the order ids from the 202 responses, with none missing and none extra.
+- `remaining_stock` equals `total_stock` minus the orders.
+- The Redis stock equals the scenario stock minus the expected reservations.
+- The Redis buyer hash holds exactly one `CONFIRMED` entry per reservation.
+- Redis stock plus PostgreSQL orders equals the stock.
+- In the race, the one order belongs to `stress-racer@example.com`.
+
+It ends with `STRESS OK` or `STRESS FAILED: <checks>` and exit code 1.
+
+Results from 2026-11-20, all on one 4-core WSL2 machine. Docker Desktop ran the stack, so the load generator shared the CPU with the API, Redis, and PostgreSQL. Each burst lasts 1.5 to 2.6 seconds, so throughput includes connection ramp-up.
+
+| Run | Throughput | p50 | p95 | p99 | Counts |
+| --- | --- | --- | --- | --- | --- |
+| k6 oversell, 2 runs | 3,265 to 3,303 req/s | 36 to 65 ms | 52 to 93 ms | 128 ms to 1.38 s | 100 × 202, 4,900 × 410 |
+| k6 same-user, 2 runs | 1,974 to 2,400 req/s | 18 to 19 ms | 85 to 98 ms | 91 to 105 ms | 1 × 202, 299 × 409 |
+| Node runner oversell, 3 runs | 1,926 to 2,788 req/s | 65 to 91 ms | 110 to 185 ms | 0.8 to 1.2 s | 100 × 202, 4,900 × 410, all store checks pass |
+| Node runner same-user, 3 runs | 2,097 to 2,779 req/s | 34 to 45 ms | 50 to 61 ms | 53 to 66 ms | 1 × 202, 299 × 409, all store checks pass |
+
+Runs right after the API container starts are slower while the JIT warms up. The second Node runner pass after a restart measured oversell at 1,603 req/s with p95 284 ms, and still passed every count and store check.
+
+How to read the latency numbers:
+
+- **k6 owns the p95 budget.** The Node runner reports latency but does not gate on it. A single Node process with 250 requests in flight queues its own responses, and that wait lands in what it measures. Against the same server, `fetch` measured p95 at 380 to 690 ms and `node:http` at 125 to 259 ms. Measured p95 tracked the client's event-loop delay in every run, so the runner prints that delay next to its numbers.
+- **The p99 tail comes from the opening wave.** In two traced k6 runs, the 94 and 143 requests slower than 500 ms all started in the first 100 ms, while 250 connections opened at once, and all got 410. Every 202 finished within 180 ms. The API container's kernel counted no listen-queue overflows and no SYN retransmits. A `node:http` client firing the same wave inside the compose network saw no request above 500 ms. The cause is not isolated.
+
+Fault injection shows the checks can fail. A stray order row inserted into PostgreSQL mid-run failed the order-id, `remaining_stock`, and conservation checks. In a second run, one unit added to the Redis stock after the sale sold out made the API reserve 101 units. PostgreSQL refused the 101st order through its `remaining_stock > 0` guard, the compensation job returned the unit, and the runner failed six checks. Editing the k6 table to expect 99 reservations, or setting the budget to 1 ms, failed the matching threshold.
 
 ## Design decisions
 
@@ -127,6 +187,7 @@ apps/api/test/
   unit/              one spec per class, collaborators mocked
   integration/       real PostgreSQL and Redis; *.e2e-spec.ts boot the whole app
 apps/web/            React storefront (Phase 4)
+tests/stress/        scenario table, k6 scripts, zero-dependency Node runner
 ```
 
 Engineering rules (test-first development, layering, size limits) are in [AGENTS.md](AGENTS.md).

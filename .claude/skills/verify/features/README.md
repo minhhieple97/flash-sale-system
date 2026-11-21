@@ -30,7 +30,7 @@ Each feature file starts with an H1 title, a status line, and one paragraph desc
 
 ## Features
 
-Implemented (Phases 1 to 3):
+Implemented (Phases 1 to 3, 5 and 6):
 - [Storefront shell](./storefront-shell.md) covers the web page loading and React rendering the app heading.
 - [API HTTP surface](./api-http-surface.md) covers the `/api/v1` prefix and the `{ code, message }` error body.
 - [Health](./health.md) covers `GET /health` with its Postgres and Redis checks.
@@ -39,5 +39,7 @@ Implemented (Phases 1 to 3):
 - [Checkout purchase](./checkout-purchase.md) covers `POST /api/v1/checkout/purchase`: reserve, duplicate, sold out, window, invalid id and unavailable.
 - [Order lookup](./order-lookup.md) covers `GET /api/v1/orders/user/:userId`: none, reserved and confirmed.
 - [Admin reset and boot hydration](./admin-reset.md) covers `POST /api/v1/admin/flash-sales/reset` and the Redis rebuild from PostgreSQL after a cold start.
+- [Containerized stack](./docker-stack.md) covers `docker compose up -d --build`, the API on its published port, and the nginx web container with its `/api` proxy.
+- [Stress suite](./stress-suite.md) covers the two k6 scripts and the Node runner with its PostgreSQL and Redis checks.
 
 Storefront sub-features of these files (`buy-form`, `lookup-card`, `status-banner`, `reset-drawer`) are planned for Phases 4.2 to 4.5 and are reported as `not implemented (Phase N)` until they land.
