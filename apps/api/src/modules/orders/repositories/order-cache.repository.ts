@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { NormalizedUserId } from '../../../common/interfaces/user-id.interface';
+import { encodeConfigFields } from '../../../infrastructure/redis/flash-sale-config.codec';
 import {
-  FLASH_SALE_CONFIG_FIELDS as FIELDS,
   flashSaleConfigKey,
   flashSaleStockKey,
   flashSaleUsersKey,
@@ -10,6 +10,7 @@ import {
   ROLLBACK_PURCHASE_REPLY,
 } from '../../../infrastructure/redis/redis.constants';
 import type { FlashSaleRedis } from '../../../infrastructure/redis/redis.interfaces';
+import { unwrapTransaction } from '../../../infrastructure/redis/redis-transaction.util';
 import { RESERVATION_SCAN_COUNT } from '../constants/orders.constants';
 import type {
   ConfirmedReservation,
@@ -51,20 +52,6 @@ function toConfirmedEntries(confirmed: readonly ConfirmedReservation[]): Record<
   return Object.fromEntries(
     confirmed.map(({ userId, orderId }) => [userId, encodeEntry('CONFIRMED', orderId)]),
   );
-}
-
-function toConfigFields(state: SaleLedgerState): Record<string, string> {
-  const { snapshot } = state;
-  return {
-    [FIELDS.saleId]: snapshot.saleId,
-    [FIELDS.productId]: snapshot.productId,
-    [FIELDS.productName]: snapshot.productName,
-    [FIELDS.salePriceCents]: String(snapshot.salePriceCents),
-    [FIELDS.originalPriceCents]: String(snapshot.originalPriceCents),
-    [FIELDS.totalStock]: String(snapshot.totalStock),
-    [FIELDS.startTimeMs]: String(snapshot.startsAtMs),
-    [FIELDS.endTimeMs]: String(snapshot.endsAtMs),
-  };
 }
 
 /**
@@ -143,12 +130,10 @@ export class OrderCacheRepository {
     const transaction = this.redis
       .multi()
       .del(usersKey, configKey)
-      .hset(configKey, toConfigFields(state))
+      .hset(configKey, encodeConfigFields(state.snapshot))
       .set(flashSaleStockKey(saleId), String(remainingStock));
     // HSET with no fields is a Redis error.
     if (state.confirmed.length > 0) transaction.hset(usersKey, toConfirmedEntries(state.confirmed));
-    const results = await transaction.exec();
-    const failure = results?.find(([error]) => error !== null)?.[0];
-    if (failure) throw failure;
+    unwrapTransaction(await transaction.exec());
   }
 }

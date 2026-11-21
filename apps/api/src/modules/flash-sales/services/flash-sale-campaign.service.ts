@@ -1,12 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ClockService } from '../../../common/providers/clock.service';
 import {
   ACTIVE_FLASH_SALE_ID,
   DEFAULT_CAMPAIGN_DURATION_MS,
   DEFAULT_CAMPAIGN_TOTAL_STOCK,
-  FLASH_SALE_ERROR_CODES,
-  FLASH_SALE_NOT_FOUND_MESSAGE,
 } from '../constants/flash-sales.constants';
+import { flashSaleNotFound } from '../errors/flash-sale-not-found.error';
 import type {
   FlashSaleCampaign,
   RescheduleCampaignParams,
@@ -46,9 +45,6 @@ export class FlashSaleCampaignService {
   }
 
   private throwNotFound(): never {
-    throw new NotFoundException({
-      code: FLASH_SALE_ERROR_CODES.FLASH_SALE_NOT_FOUND,
-      message: FLASH_SALE_NOT_FOUND_MESSAGE,
-    });
+    throw flashSaleNotFound();
   }
 }

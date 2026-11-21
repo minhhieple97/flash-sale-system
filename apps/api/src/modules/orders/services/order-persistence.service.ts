@@ -4,10 +4,10 @@ import {
   Logger,
   type OnApplicationBootstrap,
   type OnModuleDestroy,
-  ServiceUnavailableException,
 } from '@nestjs/common';
 import type { Queue } from 'bullmq';
-import { ERROR_CODES, TEMPORARY_FAILURE_MESSAGE } from '../../../common/constants/common.constants';
+import { temporaryFailure } from '../../../common/errors/temporary-failure.error';
+import { ClockService } from '../../../common/providers/clock.service';
 import { ORDER_PERSISTENCE_QUEUE } from '../../../infrastructure/queue/queue.constants';
 import { ACTIVE_FLASH_SALE_ID } from '../../flash-sales/constants/flash-sales.constants';
 import {
@@ -45,6 +45,7 @@ export class OrderPersistenceService implements OnApplicationBootstrap, OnModule
     @InjectQueue(ORDER_PERSISTENCE_QUEUE) private readonly queue: Queue<ReservationRef>,
     private readonly ordersRepository: OrdersRepository,
     private readonly orderCache: OrderCacheRepository,
+    private readonly clock: ClockService,
   ) {}
 
   /**
@@ -167,16 +168,10 @@ export class OrderPersistenceService implements OnApplicationBootstrap, OnModule
   }
 
   private async waitForActiveJobs(): Promise<void> {
-    let waitedMs = 0;
+    const deadlineMs = this.clock.nowMs() + RESET_ACTIVE_JOBS_TIMEOUT_MS;
     while ((await this.queue.getActiveCount()) > 0) {
-      if (waitedMs >= RESET_ACTIVE_JOBS_TIMEOUT_MS) {
-        throw new ServiceUnavailableException({
-          code: ERROR_CODES.TEMPORARY_FAILURE,
-          message: TEMPORARY_FAILURE_MESSAGE,
-        });
-      }
+      if (this.clock.nowMs() >= deadlineMs) throw temporaryFailure();
       await new Promise<void>((resolve) => setTimeout(resolve, RESET_ACTIVE_JOBS_POLL_MS));
-      waitedMs += RESET_ACTIVE_JOBS_POLL_MS;
     }
   }
 }

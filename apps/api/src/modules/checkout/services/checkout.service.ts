@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
-import { ERROR_CODES, TEMPORARY_FAILURE_MESSAGE } from '../../../common/constants/common.constants';
+import { temporaryFailure } from '../../../common/errors/temporary-failure.error';
 import type { NormalizedUserId } from '../../../common/interfaces/user-id.interface';
 import { ClockService } from '../../../common/providers/clock.service';
 import { ACTIVE_FLASH_SALE_ID } from '../../flash-sales/constants/flash-sales.constants';
@@ -8,12 +8,6 @@ import type { ReservationRef } from '../../orders/interfaces/order.interface';
 import { OrderPersistenceService } from '../../orders/services/order-persistence.service';
 import type { PurchaseAttemptResult } from '../interfaces/checkout.interface';
 import { CheckoutGatekeeperRepository } from '../repositories/checkout-gatekeeper.repository';
-
-const temporaryFailure = (): ServiceUnavailableException =>
-  new ServiceUnavailableException({
-    code: ERROR_CODES.TEMPORARY_FAILURE,
-    message: TEMPORARY_FAILURE_MESSAGE,
-  });
 
 @Injectable()
 export class CheckoutService {

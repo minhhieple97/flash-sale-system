@@ -10,6 +10,7 @@ import {
 } from '../../src/infrastructure/redis/redis.constants';
 import type { FlashSaleRedis } from '../../src/infrastructure/redis/redis.interfaces';
 import { ACTIVE_FLASH_SALE_ID } from '../../src/modules/flash-sales/constants/flash-sales.constants';
+import type { OrderRow } from './order-row.interface';
 import { waitFor } from './wait-for';
 
 const LOOPBACK_HOST = '127.0.0.1';
@@ -20,12 +21,6 @@ const WORKER_TIMEOUT_MS = 10000;
 export interface HttpReply {
   status: number;
   body: Record<string, unknown>;
-}
-
-export interface OrderRow {
-  id: string;
-  user_id: string;
-  status: string;
 }
 
 export interface ResetBody {

@@ -10,7 +10,11 @@ import {
 import type { OrderJobResult, ReservationRef } from '../interfaces/order.interface';
 import { OrderPersistenceService } from '../services/order-persistence.service';
 
-type OrderJobHandler = (ref: ReservationRef) => Promise<OrderJobResult>;
+interface OrderJobHandler {
+  run(ref: ReservationRef): Promise<OrderJobResult>;
+  /** Called once the last attempt failed. Must not reject: it runs inside a BullMQ event listener. */
+  onExhausted(ref: ReservationRef): Promise<void>;
+}
 
 /** Thin BullMQ worker: every decision lives in OrderPersistenceService. */
 @Processor(ORDER_PERSISTENCE_QUEUE, { concurrency: ORDER_PERSISTENCE_CONCURRENCY })
@@ -21,15 +25,30 @@ export class OrderPersistenceProcessor extends WorkerHost implements OnModuleDes
   constructor(private readonly persistence: OrderPersistenceService) {
     super();
     this.handlers = new Map<string, OrderJobHandler>([
-      [ORDER_PERSISTENCE_JOB_NAME, (ref) => this.persistence.persistReservedOrder(ref)],
-      [ORDER_COMPENSATION_JOB_NAME, (ref) => this.persistence.compensateFailedOrder(ref)],
+      [
+        ORDER_PERSISTENCE_JOB_NAME,
+        {
+          run: (ref) => this.persistence.persistReservedOrder(ref),
+          onExhausted: (ref) => this.scheduleCompensation(ref),
+        },
+      ],
+      [
+        ORDER_COMPENSATION_JOB_NAME,
+        {
+          run: (ref) => this.persistence.compensateFailedOrder(ref),
+          onExhausted: async ({ orderId }) =>
+            this.logger.error(
+              `Compensation for order ${orderId} exhausted its retries; the reservation stays held until the next boot or a reset`,
+            ),
+        },
+      ],
     ]);
   }
 
   async process(job: Job<ReservationRef>): Promise<OrderJobResult> {
     const handler = this.handlers.get(job.name);
     if (handler === undefined) throw new Error(`Unknown order job name: ${job.name}`);
-    return handler(job.data);
+    return handler.run(job.data);
   }
 
   /**
@@ -39,18 +58,16 @@ export class OrderPersistenceProcessor extends WorkerHost implements OnModuleDes
   @OnWorkerEvent('failed')
   async onFailed(job: Job<ReservationRef> | undefined): Promise<void> {
     if (job === undefined || job.attemptsMade < (job.opts.attempts ?? 1)) return;
-    const { orderId } = job.data;
-    if (job.name === ORDER_COMPENSATION_JOB_NAME) {
-      this.logger.error(
-        `Compensation for order ${orderId} exhausted its retries; the reservation stays held until the next boot or a reset`,
-      );
-      return;
-    }
-    if (job.name !== ORDER_PERSISTENCE_JOB_NAME) return;
+    await this.handlers.get(job.name)?.onExhausted(job.data);
+  }
+
+  private async scheduleCompensation(ref: ReservationRef): Promise<void> {
     try {
-      await this.persistence.scheduleCompensation(job.data);
+      await this.persistence.scheduleCompensation(ref);
     } catch (error) {
-      this.logger.error(`Could not schedule compensation for order ${orderId}: ${String(error)}`);
+      this.logger.error(
+        `Could not schedule compensation for order ${ref.orderId}: ${String(error)}`,
+      );
     }
   }
 

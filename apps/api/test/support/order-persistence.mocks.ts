@@ -1,5 +1,6 @@
 import type { JobState, Queue } from 'bullmq';
 import type { NormalizedUserId } from '../../src/common/interfaces/user-id.interface';
+import { ClockService } from '../../src/common/providers/clock.service';
 import type {
   PersistOrderResult,
   ReleaseOutcome,
@@ -76,7 +77,9 @@ export interface PersistenceServiceMocks {
  * command succeeds with no active jobs and no job is stored, the sale has no RESERVED entries to
  * reconcile, the slot holds PERSISTENCE_REF as RESERVED, and PostgreSQL holds no order for the user.
  */
-export function buildPersistenceService(): PersistenceServiceMocks {
+export function buildPersistenceService(
+  clock: ClockService = new ClockService(),
+): PersistenceServiceMocks {
   const calls: string[] = [];
   const queue = queueMocks(calls);
   const orders = ordersMocks(calls);
@@ -85,6 +88,7 @@ export function buildPersistenceService(): PersistenceServiceMocks {
     queue as unknown as Queue<ReservationRef>,
     orders as unknown as OrdersRepository,
     cache as unknown as OrderCacheRepository,
+    clock,
   );
   return { service, calls, queue, orders, cache };
 }

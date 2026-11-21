@@ -77,13 +77,13 @@ describe('FlashSaleCacheRepository', () => {
     await expect(repository.readSnapshot(newSaleId())).resolves.toBeNull();
   });
 
-  it('reads a missing stock as remainingStock 0', async () => {
+  it('rejects when the config hash exists but the stock key is missing', async () => {
     const saleId = newSaleId();
     await seedConfig(saleId);
 
-    const snapshot = await repository.readSnapshot(saleId);
+    const read = repository.readSnapshot(saleId);
 
-    expect(snapshot?.remainingStock).toBe(0);
+    await expect(read).rejects.toThrow('stock');
   });
 
   it('rejects when a numeric field is corrupt', async () => {

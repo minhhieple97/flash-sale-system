@@ -1,5 +1,6 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import { ERROR_CODES } from '../../src/common/constants/common.constants';
+import type { ClockService } from '../../src/common/providers/clock.service';
 import {
   RESET_ACTIVE_JOBS_POLL_MS,
   RESET_ACTIVE_JOBS_TIMEOUT_MS,
@@ -63,6 +64,22 @@ describe('OrderPersistenceService reset fence', () => {
         code: ERROR_CODES.TEMPORARY_FAILURE,
       });
       expect(queue.drain).not.toHaveBeenCalled();
+      expect(orders.deleteBySale).not.toHaveBeenCalled();
+    });
+
+    it('counts the time a slow getActiveCount takes toward the timeout, using the injected clock', async () => {
+      let nowMs = 1_000;
+      const clock = { nowMs: () => nowMs } as unknown as ClockService;
+      const { service, queue, orders } = buildPersistenceService(clock);
+      queue.getActiveCount.mockImplementation(async () => {
+        nowMs += RESET_ACTIVE_JOBS_TIMEOUT_MS;
+        return 1;
+      });
+
+      const discard = service.discardSaleOrders('sale-1');
+
+      await expect(discard).rejects.toBeInstanceOf(ServiceUnavailableException);
+      expect(queue.getActiveCount).toHaveBeenCalledTimes(1);
       expect(orders.deleteBySale).not.toHaveBeenCalled();
     });
 

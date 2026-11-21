@@ -14,20 +14,10 @@ const INSERT_CAMPAIGN_IF_ABSENT_SQL = `
 const RESCHEDULE_CAMPAIGN_SQL = `
   UPDATE flash_sales
   SET total_stock = $2, remaining_stock = $2, starts_at = $3, ends_at = $4, updated_at = NOW()
-  WHERE id = $1
-  RETURNING id, product_id, total_stock, remaining_stock, starts_at, ends_at`;
+  WHERE id = $1`;
 
-interface CampaignRow {
-  id: string;
-  product_id: string;
-  total_stock: number;
-  remaining_stock: number;
-  starts_at: Date;
-  ends_at: Date;
-}
-
-/** TypeORM returns `[rows, affectedCount]` for UPDATE, even with RETURNING. */
-type UpdateResult = [rows: CampaignRow[], affectedCount: number];
+/** TypeORM returns `[rows, affectedCount]` for a raw UPDATE. */
+type UpdateResult = [rows: unknown[], affectedCount: number];
 
 @Injectable()
 export class FlashSalesRepository {
@@ -60,21 +50,13 @@ export class FlashSalesRepository {
   }
 
   async reschedule(params: RescheduleCampaignParams): Promise<FlashSaleCampaign | null> {
-    const [rows]: UpdateResult = await this.flashSales.query(RESCHEDULE_CAMPAIGN_SQL, [
+    const [, affectedCount]: UpdateResult = await this.flashSales.query(RESCHEDULE_CAMPAIGN_SQL, [
       params.saleId,
       params.totalStock,
       new Date(params.startsAtMs),
       new Date(params.endsAtMs),
     ]);
-    const [row] = rows;
-    if (!row) return null;
-    return {
-      id: row.id,
-      productId: row.product_id,
-      totalStock: row.total_stock,
-      remainingStock: row.remaining_stock,
-      startsAt: row.starts_at,
-      endsAt: row.ends_at,
-    };
+    if (affectedCount === 0) return null;
+    return this.findById(params.saleId);
   }
 }

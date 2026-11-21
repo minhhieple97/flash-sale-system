@@ -7,6 +7,7 @@ import { ATTEMPT_PURCHASE_SCRIPT } from './lua/attempt-purchase.lua';
 import { ROLLBACK_PURCHASE_SCRIPT } from './lua/rollback-purchase.lua';
 import { REDIS_CLIENT, REDIS_CLOSED_STATUS } from './redis.constants';
 import type { FlashSaleRedis } from './redis.interfaces';
+import { redisConnectionOptions } from './redis-connection.options';
 
 const FLASH_SALE_SCRIPTS = [ATTEMPT_PURCHASE_SCRIPT, ROLLBACK_PURCHASE_SCRIPT];
 
@@ -16,9 +17,7 @@ const FLASH_SALE_SCRIPTS = [ATTEMPT_PURCHASE_SCRIPT, ROLLBACK_PURCHASE_SCRIPT];
       provide: REDIS_CLIENT,
       inject: [ConfigService],
       useFactory: (config: ConfigService<AppEnv, true>): FlashSaleRedis => {
-        const host: string = config.get('REDIS_HOST', { infer: true });
-        const port: number = config.get('REDIS_PORT', { infer: true });
-        const client = new Redis({ host, port });
+        const client = new Redis(redisConnectionOptions(config));
         for (const { name, numberOfKeys, lua } of FLASH_SALE_SCRIPTS) {
           client.defineCommand(name, { numberOfKeys, lua });
         }

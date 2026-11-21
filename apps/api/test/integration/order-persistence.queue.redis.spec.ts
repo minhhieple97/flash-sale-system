@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { BullModule, getQueueToken } from '@nestjs/bullmq';
 import { Test, type TestingModule } from '@nestjs/testing';
 import type { Queue } from 'bullmq';
+import { ClockService } from '../../src/common/providers/clock.service';
 import { AppConfigModule } from '../../src/config/app-config.module';
 import { ORDER_PERSISTENCE_QUEUE } from '../../src/infrastructure/queue/queue.constants';
 import { QueueModule } from '../../src/infrastructure/queue/queue.module';
@@ -37,6 +38,7 @@ describe('OrderPersistenceService against the real order-persistence queue', () 
       ],
       providers: [
         OrderPersistenceService,
+        ClockService,
         { provide: OrdersRepository, useValue: {} },
         {
           provide: OrderCacheRepository,

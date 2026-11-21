@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Logger } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import type { Queue } from 'bullmq';
+import { ClockService } from '../../src/common/providers/clock.service';
 import { AppConfigModule } from '../../src/config/app-config.module';
 import { DatabaseModule } from '../../src/infrastructure/database/database.module';
 import { flashSaleStockKey } from '../../src/infrastructure/redis/redis.constants';
@@ -40,6 +41,7 @@ describe('order persistence liveness fence', () => {
       unreachableQueue(),
       moduleRef.get(OrdersRepository),
       cacheHarness.cache,
+      new ClockService(),
     );
   });
 

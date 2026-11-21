@@ -3,20 +3,19 @@ import { Test, type TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 import { AppConfigModule } from '../../src/config/app-config.module';
 import { DatabaseModule } from '../../src/infrastructure/database/database.module';
+import type { OrderRow } from './order-row.interface';
 
 const STARTS_AT = '2030-01-01T00:00:00.000Z';
 const ENDS_AT = '2030-01-01T01:00:00.000Z';
 
-export interface OrderRow {
-  id: string;
-  user_id: string;
-  status: string;
-}
-
 export interface SaleDbHarness {
-  seedSale(saleId: string, stock: number): Promise<void>;
+  readonly productId: string;
+  /** `totalStock` defaults to `stock`. */
+  seedSale(saleId: string, stock: number, totalStock?: number): Promise<void>;
   deleteSale(saleId: string): Promise<void>;
   ordersOf(saleId: string): Promise<OrderRow[]>;
+  orderProductIds(saleId: string): Promise<string[]>;
+  query(sql: string, params: unknown[]): Promise<unknown>;
   stockOf(saleId: string): Promise<number>;
   close(): Promise<void>;
 }
@@ -37,12 +36,13 @@ export async function createSaleDbHarness(): Promise<SaleDbHarness> {
   );
 
   return {
-    async seedSale(saleId, stock) {
+    productId,
+    async seedSale(saleId, stock, totalStock = stock) {
       saleIds.push(saleId);
       await dataSource.query(
         `INSERT INTO flash_sales (id, product_id, total_stock, remaining_stock, starts_at, ends_at)
-         VALUES ($1, $2, $3, $3, $4, $5)`,
-        [saleId, productId, stock, STARTS_AT, ENDS_AT],
+         VALUES ($1, $2, $4, $3, $5, $6)`,
+        [saleId, productId, stock, totalStock, STARTS_AT, ENDS_AT],
       );
     },
     async deleteSale(saleId) {
@@ -50,6 +50,14 @@ export async function createSaleDbHarness(): Promise<SaleDbHarness> {
     },
     ordersOf: (saleId) =>
       dataSource.query('SELECT id, user_id, status FROM orders WHERE flash_sale_id = $1', [saleId]),
+    async orderProductIds(saleId) {
+      const rows: { product_id: string }[] = await dataSource.query(
+        'SELECT product_id FROM orders WHERE flash_sale_id = $1',
+        [saleId],
+      );
+      return rows.map((row) => row.product_id);
+    },
+    query: (sql, params) => dataSource.query(sql, params),
     async stockOf(saleId) {
       const rows: { remaining_stock: number }[] = await dataSource.query(
         'SELECT remaining_stock FROM flash_sales WHERE id = $1',

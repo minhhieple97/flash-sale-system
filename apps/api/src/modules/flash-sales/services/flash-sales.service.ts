@@ -1,11 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ClockService } from '../../../common/providers/clock.service';
 import {
   ACTIVE_FLASH_SALE_ID,
-  FLASH_SALE_ERROR_CODES,
-  FLASH_SALE_NOT_FOUND_MESSAGE,
   FLASH_SALE_STATUS_CACHE_TTL_MS,
 } from '../constants/flash-sales.constants';
+import { flashSaleNotFound } from '../errors/flash-sale-not-found.error';
 import type {
   FlashSaleCacheEntry,
   FlashSaleSnapshot,
@@ -26,10 +25,7 @@ export class FlashSalesService {
   async getCurrentStatus(): Promise<FlashSaleStatus> {
     const snapshot = await this.loadSnapshot();
     if (!snapshot) {
-      throw new NotFoundException({
-        code: FLASH_SALE_ERROR_CODES.FLASH_SALE_NOT_FOUND,
-        message: FLASH_SALE_NOT_FOUND_MESSAGE,
-      });
+      throw flashSaleNotFound();
     }
     const serverTimeMs = this.clock.nowMs();
     return { ...snapshot, saleState: computeSaleState(snapshot, serverTimeMs), serverTimeMs };
