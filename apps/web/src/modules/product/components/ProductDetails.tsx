@@ -10,11 +10,11 @@ interface ProductDetailsProps {
 
 export function ProductDetails({ product }: ProductDetailsProps): ReactElement {
   return (
-    <div className="grid gap-6 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-      <div className="aspect-square overflow-hidden rounded-xl">
+    <div className="grid gap-6 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] sm:gap-8">
+      <div className="aspect-square overflow-hidden rounded-2xl">
         <ProductImage name={product.name} imageUrl={product.imageUrl} />
       </div>
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col justify-center gap-4">
         <div className="flex flex-wrap gap-2 text-xs font-semibold uppercase tracking-wide">
           <span className="rounded-full bg-amber-100 px-2.5 py-1 text-amber-800">
             {LIMITED_EDITION_LABEL}
@@ -23,8 +23,10 @@ export function ProductDetails({ product }: ProductDetailsProps): ReactElement {
             {product.sku}
           </span>
         </div>
-        <h2 className="text-2xl font-bold text-slate-900">{product.name}</h2>
-        <p className="text-slate-600">{product.description}</p>
+        <h2 className="text-2xl font-bold leading-tight tracking-tight text-slate-950 sm:text-3xl">
+          {product.name}
+        </h2>
+        <p className="leading-relaxed text-slate-600">{product.description}</p>
         <ProductPrice
           originalPriceCents={product.originalPriceCents}
           salePriceCents={product.salePriceCents}

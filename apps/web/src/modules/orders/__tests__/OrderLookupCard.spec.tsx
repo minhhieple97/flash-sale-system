@@ -54,6 +54,9 @@ describe('OrderLookupCard layout', () => {
     await user.click(checkOrder());
 
     expect(checkOrder()).toBeDisabled();
+    expect(checkOrder()).toHaveAttribute('aria-busy', 'true');
+    expect(checkOrder()).toHaveTextContent('Checking...');
+    expect(userIdInput()).toBeDisabled();
   });
 });
 

@@ -1,10 +1,12 @@
 import { type ReactElement, useId } from 'react';
+import { LoadingSpinner } from '@/shared/components/LoadingSpinner';
 import type { ScenarioPreset } from '../types/simulation.types';
 
 interface ScenarioPresetButtonProps {
   preset: ScenarioPreset;
   isLive: boolean;
   isDisabled: boolean;
+  isApplying: boolean;
   onSelect: (preset: ScenarioPreset) => void;
 }
 
@@ -16,6 +18,7 @@ export function ScenarioPresetButton({
   preset,
   isLive,
   isDisabled,
+  isApplying,
   onSelect,
 }: ScenarioPresetButtonProps): ReactElement {
   const descriptionId = useId();
@@ -23,12 +26,16 @@ export function ScenarioPresetButton({
     <button
       type="button"
       disabled={isDisabled}
+      aria-busy={isApplying}
       aria-label={preset.label}
       aria-describedby={descriptionId}
       onClick={() => onSelect(preset)}
       className={`${BASE} ${isLive ? LIVE : REST} w-full text-left disabled:cursor-not-allowed disabled:opacity-60`}
     >
-      <span className="block text-sm font-semibold text-slate-900">{preset.label}</span>
+      <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+        {isApplying ? <LoadingSpinner /> : null}
+        {preset.label}
+      </span>
       <span id={descriptionId} className="mt-0.5 block text-xs text-slate-500">
         {preset.description}
       </span>

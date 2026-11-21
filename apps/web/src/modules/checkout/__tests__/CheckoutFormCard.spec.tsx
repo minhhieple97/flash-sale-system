@@ -90,6 +90,9 @@ describe('CheckoutFormCard submitting', () => {
 
     expect(buyNow()).toBeDisabled();
     expect(buyNow()).toHaveAttribute('aria-busy', 'true');
+    expect(buyNow()).toHaveTextContent('Processing...');
+    expect(userIdInput()).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Random Test User' })).toBeDisabled();
   });
 
   it('shows the reservation feedback with the order id on 202', async () => {

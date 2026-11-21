@@ -35,12 +35,17 @@ export function CheckoutFormCard({ saleState }: CheckoutFormCardProps): ReactEle
   return (
     <Card title="Checkout">
       <form onSubmit={handleSubmit} className="space-y-4">
-        <UserIdField value={userId} onChange={setUserId} />
+        <UserIdField value={userId} onChange={setUserId} disabled={isSubmitting} />
         <CheckoutActions
           canBuy={canBuy}
           isSubmitting={isSubmitting}
           onRandomUser={() => setUserId(generateTestUserId())}
         />
+        {isSubmitting ? (
+          <span role="status" className="sr-only">
+            Processing your purchase
+          </span>
+        ) : null}
         {reason ? <p className="text-sm text-slate-600">{reason}</p> : null}
       </form>
       <div className="mt-4">

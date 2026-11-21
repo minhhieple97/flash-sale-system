@@ -2,10 +2,15 @@ import { type ReactElement, useId } from 'react';
 
 interface OrderUserIdFieldProps {
   value: string;
+  disabled: boolean;
   onChange: (value: string) => void;
 }
 
-export function OrderUserIdField({ value, onChange }: OrderUserIdFieldProps): ReactElement {
+export function OrderUserIdField({
+  value,
+  onChange,
+  disabled,
+}: OrderUserIdFieldProps): ReactElement {
   const inputId = useId();
   return (
     <div>
@@ -15,9 +20,10 @@ export function OrderUserIdField({ value, onChange }: OrderUserIdFieldProps): Re
       <input
         id={inputId}
         value={value}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         autoComplete="off"
-        className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+        className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 transition focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
       />
     </div>
   );

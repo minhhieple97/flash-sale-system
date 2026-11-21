@@ -95,6 +95,11 @@ describe('DemoScenarioDrawer', () => {
     for (const [label] of PRESET_CASES) {
       expect(screen.getByRole('button', { name: label })).toBeDisabled();
     }
+    expect(screen.getByRole('button', { name: 'Active Sale' })).toHaveAttribute(
+      'aria-busy',
+      'true',
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('Applying: Active Sale');
   });
 
   it('shows the API message in an alert and skips the callback when the reset fails', async () => {

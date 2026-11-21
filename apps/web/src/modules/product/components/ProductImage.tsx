@@ -13,7 +13,7 @@ export function ProductImage({ name, imageUrl }: ProductImageProps): ReactElemen
     <div
       data-testid="product-image-placeholder"
       aria-hidden="true"
-      className="flex h-full w-full items-center justify-center bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500"
+      className="flex h-full w-full items-center justify-center bg-gradient-to-br from-indigo-600 via-violet-600 to-fuchsia-500"
     >
       <svg
         aria-hidden="true"
