@@ -25,7 +25,7 @@ pnpm --filter @flash-sale/api build >"$STATE_DIR/api-build.log" 2>&1
 
 PORT="$API_PORT" setsid node apps/api/dist/main.js >"$STATE_DIR/api.log" 2>&1 &
 echo $! >"$STATE_DIR/api.pgid"
-(cd apps/web && exec setsid node_modules/.bin/vite --host 127.0.0.1 --port "$WEB_PORT" --strictPort) \
+(cd apps/web && VITE_API_PROXY_TARGET="$API_URL" exec setsid node_modules/.bin/vite --host 127.0.0.1 --port "$WEB_PORT" --strictPort) \
   >"$STATE_DIR/web.log" 2>&1 &
 echo $! >"$STATE_DIR/web.pgid"
 
