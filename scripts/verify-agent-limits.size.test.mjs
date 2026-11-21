@@ -35,6 +35,11 @@ describe('max-file-lines', () => {
     assert.deepEqual(found(run(makeRepo(over))), ['apps/api/test/c.ts:1 [max-file-lines]']);
   });
 
+  test('tests/** is in scope', () => {
+    const result = run(makeRepo({ 'tests/stress/tool.mjs': numbered(221) }));
+    assert.deepEqual(found(result), ['tests/stress/tool.mjs:1 [max-file-lines]']);
+  });
+
   test('scripts/** is in scope', () => {
     const result = run(makeRepo({ 'scripts/tool.mjs': numbered(221) }));
     assert.deepEqual(found(result), ['scripts/tool.mjs:1 [max-file-lines]']);

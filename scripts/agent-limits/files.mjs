@@ -5,7 +5,7 @@ import ts from 'typescript';
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'coverage', '.git']);
 const SOURCE_EXT = /\.(ts|tsx|mts|cts|js|mjs|cjs)$/;
 const DECLARATION = /\.d\.(ts|mts|cts)$/;
-const IN_SCOPE = /^(apps\/[^/]+\/(src|test)|scripts)\//;
+const IN_SCOPE = /^(apps\/[^/]+\/(src|test)|scripts|tests)\//;
 const TEST_NAME = /\.(spec|e2e-spec|test)\./;
 
 export function findRepoRoot(start) {
@@ -59,13 +59,11 @@ function toContext(abs, root) {
   return { relPath, kind: isTestPath(relPath) ? 'test' : 'source', text, sourceFile };
 }
 
+function* walkAll(targets) {
+  for (const target of targets) yield* walk(target);
+}
+
 export function collectFiles(targets, root) {
-  const seen = new Map();
-  for (const target of targets) {
-    for (const abs of walk(target)) {
-      if (seen.has(abs)) continue;
-      seen.set(abs, toContext(abs, root));
-    }
-  }
-  return [...seen.values()].filter(Boolean);
+  const unique = [...new Set(walkAll(targets))];
+  return unique.map((abs) => toContext(abs, root)).filter(Boolean);
 }

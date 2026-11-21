@@ -5,10 +5,11 @@ import { matchesPackage } from './rules-controller.mjs';
 const FORBIDDEN_PACKAGES = ['typeorm', '@nestjs/typeorm', 'ioredis'];
 const RAW_STORAGE_METHODS = new Set(
   (
-    'query createQueryBuilder eval evalsha hget hset hdel hexists hgetall hincrby incr incrby ' +
-    'decr decrby setex psetex expire pexpire ping pipeline multi sadd srem smembers zadd'
+    'query createQueryBuilder eval evalsha hget hset hdel hexists hgetall hmget hsetnx mget mset hincrby incr incrby ' +
+    'decr decrby setex psetex expire pexpire ping pipeline multi sadd srem smembers zadd attemptPurchase rollbackPurchase'
   ).split(' '),
 );
+const REDIS_TOKEN = 'REDIS_CLIENT';
 const SQL_SHAPE = new RegExp(
   [
     String.raw`\bSELECT\s+(?:\d+\b|\*|[\s\S]+?\sFROM\s)`,
@@ -48,6 +49,14 @@ function callViolations(ctx) {
   });
 }
 
+function tokenViolations(ctx) {
+  return collect(ctx.sourceFile, (node) => {
+    if (!ts.isIdentifier(node) || node.text !== REDIS_TOKEN) return undefined;
+    const message = `${REDIS_TOKEN} must not be referenced here; use a cache repository`;
+    return make(ctx, startLine(ctx.sourceFile, node), message);
+  });
+}
+
 function sqlViolations(ctx) {
   return collect(ctx.sourceFile, (node) => {
     const text = literalText(node);
@@ -63,7 +72,12 @@ function sqlViolations(ctx) {
 export const serviceRules = [
   {
     id: 'service-raw-storage',
-    appliesTo: (ctx) => /^apps\/api\/.*\.service\.ts$/.test(ctx.relPath),
-    check: (ctx) => [...importViolations(ctx), ...callViolations(ctx), ...sqlViolations(ctx)],
+    appliesTo: (ctx) => /^apps\/api\/.*\.(service|processor)\.ts$/.test(ctx.relPath),
+    check: (ctx) => [
+      ...importViolations(ctx),
+      ...callViolations(ctx),
+      ...tokenViolations(ctx),
+      ...sqlViolations(ctx),
+    ],
   },
 ];

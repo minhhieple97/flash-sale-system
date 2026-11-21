@@ -102,6 +102,59 @@ describe('service-raw-storage', () => {
   });
 });
 
+describe('service-raw-storage coverage', () => {
+  const PROCESSOR = 'apps/api/src/modules/orders/processors/persist.processor.ts';
+
+  test('flags Redis hash, multi-key and custom Lua command calls', () => {
+    const methods = 'hgetall hmget hsetnx mget mset attemptPurchase rollbackPurchase'.split(' ');
+    const lines = methods.map((m) => `  ${m}_() { return this.redis.${m}('k'); }`);
+    const body = joined(['export class S {', ...lines, '}']);
+    const result = run(makeRepo({ [SERVICE]: body }));
+    assert.deepEqual(
+      found(result),
+      methods.map((_, i) => `${SERVICE}:${i + 2} [service-raw-storage]`),
+    );
+  });
+
+  test('ordinary JS method names such as get, set, del, exec and keys stay allowed', () => {
+    const body = joined([
+      'export class S {',
+      '  a(m: Map<string, string>) { return [m.get("a"), m.set("a", "b"), m.delete("a")]; }',
+      '  b(re: RegExp) { return [re.exec("a"), Object.keys({})]; }',
+      '}',
+    ]);
+    assert.equal(run(makeRepo({ [SERVICE]: body })).status, 0);
+  });
+
+  test('flags any reference to the REDIS_CLIENT token', () => {
+    const body = joined([
+      "import { REDIS_CLIENT } from '../constants/redis.constants';",
+      'export class S {',
+      '  constructor(@Inject(REDIS_CLIENT) private readonly redis: FlashSaleRedis) {}',
+      '}',
+    ]);
+    const result = run(makeRepo({ [SERVICE]: body }));
+    assert.deepEqual(found(result), [
+      `${SERVICE}:1 [service-raw-storage]`,
+      `${SERVICE}:3 [service-raw-storage]`,
+    ]);
+  });
+
+  test('applies to processors as well as services', () => {
+    const body = joined([
+      "import { DataSource } from 'typeorm';",
+      'export class P {',
+      "  run() { return this.redis.hgetall('k'); }",
+      '}',
+    ]);
+    const result = run(makeRepo({ [PROCESSOR]: body }));
+    assert.deepEqual(found(result), [
+      `${PROCESSOR}:1 [service-raw-storage]`,
+      `${PROCESSOR}:3 [service-raw-storage]`,
+    ]);
+  });
+});
+
 describe('module-barrel-import', () => {
   const orders = {
     'apps/web/src/modules/orders/index.ts': 'export const a = 1;\n',
