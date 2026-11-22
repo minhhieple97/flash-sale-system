@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  quality-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm test:scripts
+      - run: pnpm -r typecheck
+      - run: pnpm --filter @flash-sale/api test:unit
+      - run: pnpm --filter @flash-sale/web test
+      - run: pnpm -r build
+
+  api-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: flash_sale
+          POSTGRES_PASSWORD: flash_sale
+          POSTGRES_DB: flash_sale
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd="pg_isready -U flash_sale -d flash_sale"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - "6379:6379"
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @flash-sale/api exec jest --selectProjects integration --detectOpenHandles
+        env:
+          NODE_ENV: test
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_PORT: "5432"
+          POSTGRES_USER: flash_sale
+          POSTGRES_PASSWORD: flash_sale
+          POSTGRES_DB: flash_sale
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: "6379"
+          ENABLE_ADMIN_ENDPOINTS: "true"
