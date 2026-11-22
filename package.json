@@ -1,0 +1,35 @@
+{
+  "name": "flash-sale-system",
+  "private": true,
+  "packageManager": "pnpm@12.16.1",
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=12.0.0 <13.0.0"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": ">=24.0.0",
+      "onFail": "error"
+    }
+  },
+  "scripts": {
+    "lint": "biome check --error-on-warnings . && node scripts/arch-check.mjs",
+    "format": "biome format --write .",
+    "test": "pnpm -r test",
+    "test:scripts": "node --test scripts/*.test.mjs",
+    "typecheck": "pnpm -r typecheck",
+    "build": "pnpm -r build",
+    "verify": "bash scripts/verify.sh",
+    "stress:node": "node tests/stress/node-stress-runner.mjs",
+    "stress:node:mixed": "node tests/stress/node-stress-runner.mjs mixed",
+    "stress:node:pg-blip": "node tests/stress/node-stress-runner.mjs pg-blip",
+    "stress:k6:oversell": "docker compose run --rm --no-deps k6 run /scripts/oversell-stress.k6.js",
+    "stress:k6:same-user": "docker compose run --rm --no-deps k6 run /scripts/same-user-race.k6.js",
+    "stress:k6:realistic": "docker compose run --rm --no-deps -e BASE_URL=http://web:80 k6 run /scripts/realistic-mix.k6.js"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.8",
+    "typescript": "6.0.3"
+  }
+}
