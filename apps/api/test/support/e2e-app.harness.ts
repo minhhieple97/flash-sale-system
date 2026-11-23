@@ -1,6 +1,6 @@
-import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
+import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { DataSource } from 'typeorm';
-import { configureApp } from '../../src/app.setup';
+import { configureApp, createFastifyAdapter } from '../../src/app.setup';
 import { ACTIVE_FLASH_SALE_ID } from '../../src/modules/flash-sales/constants/flash-sales.constants';
 import { createAppTestingModule } from './app-module.testing';
 import {
@@ -57,7 +57,7 @@ function postJson(url: string, body: unknown): Promise<HttpReply> {
 /** The full AppModule listening on an ephemeral loopback port, driven over real HTTP. */
 export async function startE2eApp(): Promise<E2eApp> {
   const moduleRef = await createAppTestingModule().compile();
-  const app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter(), {
+  const app = moduleRef.createNestApplication<NestFastifyApplication>(createFastifyAdapter(), {
     logger: false,
   });
   configureApp(app);

@@ -1,7 +1,7 @@
-import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
+import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { configureApp } from '../../src/app.setup';
+import { configureApp, createFastifyAdapter } from '../../src/app.setup';
 import { RateLimitGuard } from '../../src/common/guards/rate-limit.guard';
 import type { NormalizedUserId } from '../../src/common/interfaces/user-id.interface';
 import { OrdersController } from '../../src/modules/orders/controllers/orders.controller';
@@ -24,7 +24,7 @@ describe('OrdersController', () => {
       .overrideGuard(RateLimitGuard)
       .useValue({ canActivate })
       .compile();
-    app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter(), {
+    app = moduleRef.createNestApplication<NestFastifyApplication>(createFastifyAdapter(), {
       logger: false,
     });
     configureApp(app);

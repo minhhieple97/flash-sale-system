@@ -1,12 +1,14 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
-import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { configureApp } from '../../src/app.setup';
+import { configureApp, createFastifyAdapter } from '../../src/app.setup';
 import {
   HEALTH_ROUTE,
   HTTP_BODY_LIMIT_BYTES,
+  HTTP_MAX_PARAM_LENGTH,
   METRICS_ROUTE,
+  USER_ID_MAX_LENGTH,
 } from '../../src/common/constants/common.constants';
 
 @Controller(HEALTH_ROUTE)
@@ -31,6 +33,11 @@ class EchoProbeController {
   echo(@Body() body: { text: string }): { size: number } {
     return { size: body.text.length };
   }
+
+  @Get('user/:userId')
+  user(@Param('userId') userId: string): { userId: string } {
+    return { userId };
+  }
 }
 
 describe('configureApp', () => {
@@ -40,10 +47,9 @@ describe('configureApp', () => {
     const moduleRef = await Test.createTestingModule({
       controllers: [HealthProbeController, MetricsProbeController, EchoProbeController],
     }).compile();
-    app = moduleRef.createNestApplication<NestFastifyApplication>(
-      new FastifyAdapter({ bodyLimit: HTTP_BODY_LIMIT_BYTES }),
-      { logger: false },
-    );
+    app = moduleRef.createNestApplication<NestFastifyApplication>(createFastifyAdapter(), {
+      logger: false,
+    });
     configureApp(app);
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
@@ -75,7 +81,7 @@ describe('configureApp', () => {
     }
   });
 
-  it('enforces HTTP_BODY_LIMIT_BYTES when FastifyAdapter uses the configured limit', async () => {
+  it('enforces HTTP_BODY_LIMIT_BYTES with a 413 PAYLOAD_TOO_LARGE envelope', async () => {
     const oversized = 'a'.repeat(HTTP_BODY_LIMIT_BYTES + 128);
 
     const response = await request(app.getHttpServer())
@@ -83,5 +89,31 @@ describe('configureApp', () => {
       .send({ text: oversized });
 
     expect(response.status).toBe(413);
+    expect(response.body).toEqual({
+      code: 'PAYLOAD_TOO_LARGE',
+      message: 'Request body is too large',
+    });
+  });
+
+  it.each([
+    ['a 128-character email with encoded + and @', `${'alice+tag.'.repeat(11)}abcdef@example.com`],
+    ['a worst-case 128-character percent-encoded userId', '@'.repeat(USER_ID_MAX_LENGTH)],
+  ])('accepts %s on a :userId route without 414', async (_label, userId) => {
+    expect(userId).toHaveLength(USER_ID_MAX_LENGTH);
+
+    const response = await request(app.getHttpServer()).get(
+      `/api/v1/echo/user/${encodeURIComponent(userId)}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ userId });
+  });
+
+  it('rejects route params exceeding HTTP_MAX_PARAM_LENGTH with 414', async () => {
+    const tooLong = 'a'.repeat(HTTP_MAX_PARAM_LENGTH + 1);
+
+    const response = await request(app.getHttpServer()).get(`/api/v1/echo/user/${tooLong}`);
+
+    expect(response.status).toBe(414);
   });
 });

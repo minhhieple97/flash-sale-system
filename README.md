@@ -26,7 +26,7 @@ Ports `3000`, `8080`, `5432`, and `6379` bind to `127.0.0.1`. First boot creates
 | React storefront | Boundary-scheduled countdown (`setTimeout`), `[userId, orderId]`-keyed poller (`1 s × 30`) | [Architecture](docs/architecture.md#5-purchase-flow) |
 | High throughput & scalability | Single Lua + enqueue hot path (no DB write), auto-pipelined Redis, clear 10x-100x scaling plan | [Architecture](docs/architecture.md#8-scaling-to-production-10x-100x) |
 | Fault tolerance | 5-min retries, PG-first compensation, stateless `O(pending)` Redis `ZSET` sweep, chunked Redis restore | [Architecture](docs/architecture.md#6-fault-tolerance-and-recovery) |
-| Tests & stress benchmarks | 915 automated tests + Node & k6 stress suites (including 45 s PG outage & 330-VU nginx mix) | [API & Dev](docs/api-and-development.md#3-testing-static-checks-and-verification), [Benchmarks](docs/benchmarks.md) |
+| Tests & stress benchmarks | 919 automated tests + Node & k6 stress suites (including 45 s PG outage & 330-VU nginx mix) | [API & Dev](docs/api-and-development.md#3-testing-static-checks-and-verification), [Benchmarks](docs/benchmarks.md) |
 
 **Documentation:** [Architecture, Fault Tolerance & Scaling](docs/architecture.md) · [HTTP API, Development & Testing](docs/api-and-development.md) · [Benchmarks & Stress Results](docs/benchmarks.md)
 
@@ -100,14 +100,29 @@ Routes live under `/api/v1` except `/health` and `/metrics` (`Cache-Control: no-
 
 `pnpm verify` validates 9 gates (`postgres` + `redis` healthy, `pnpm lint` via Biome `--error-on-warnings`, `pnpm test:scripts`, `pnpm -r typecheck`, `api` compose container stopped, Jest `--detectOpenHandles` with 0 open handles, Web Vitest, `pnpm -r build`). GitHub Actions (`.github/workflows/ci.yml`) runs `quality-and-unit` and `api-integration` on every push and PR.
 
+```sh
+nvm use && pnpm install               # Node >= 24 (.nvmrc) + workspace deps
+docker compose up -d --wait postgres redis
+docker compose stop api web           # Compose api shares the BullMQ queue with host integration tests
+pnpm verify                           # or: pnpm --filter @flash-sale/api test:integration
+```
+
 | Suite | Command | Result |
 | --- | --- | --- |
-| API unit | `pnpm --filter @flash-sale/api test:unit` | `52` files, `485` passed |
+| API unit | `pnpm --filter @flash-sale/api test:unit` | `52` files, `488` passed |
 | API integration & E2E | `pnpm --filter @flash-sale/api test:integration` | `32` files (`28` integration + `4` E2E), `197` passed |
-| Web (Vitest + RTL) | `pnpm --filter @flash-sale/web test` | `21` files, `214` passed |
+| Web (Vitest + RTL) | `pnpm --filter @flash-sale/web test` | `21` files, `215` passed |
 | Stress math | `pnpm test:scripts` | `1` file (`10` suites), `19` passed |
 
 Stress benchmarks (2026-11-23, 4-vCPU / 2-physical-core WSL2 host, `RATE_LIMIT_ENABLED=false`; full tables & 3-image CPU study in [docs/benchmarks.md](docs/benchmarks.md)):
+
+```sh
+docker compose up -d --wait           # start postgres, redis, api, web before load runs
+pnpm stress:node                      # direct API (oversell, same-user-race, mixed, pg-blip)
+pnpm stress:k6:oversell               # 250-VU oversell barrier against api:3000
+pnpm stress:k6:same-user              # 300-req single-buyer duplicate race against api:3000
+pnpm stress:k6:realistic              # 330-VU end-to-end mix through nginx (web:80)
+```
 
 | Run | Target | Result |
 | --- | --- | --- |

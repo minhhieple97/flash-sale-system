@@ -1,8 +1,10 @@
 import { HttpAdapterHost } from '@nestjs/core';
-import type { NestFastifyApplication } from '@nestjs/platform-fastify';
+import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import {
   API_GLOBAL_PREFIX,
   HEALTH_ROUTE,
+  HTTP_BODY_LIMIT_BYTES,
+  HTTP_MAX_PARAM_LENGTH,
   METRICS_ROUTE,
 } from './common/constants/common.constants';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
@@ -12,6 +14,14 @@ const SECURITY_HEADERS: ReadonlyArray<readonly [string, string]> = [
   ['X-Frame-Options', 'DENY'],
   ['Referrer-Policy', 'no-referrer'],
 ];
+
+export function createFastifyAdapter(trustProxy = false): FastifyAdapter {
+  return new FastifyAdapter({
+    bodyLimit: HTTP_BODY_LIMIT_BYTES,
+    trustProxy,
+    routerOptions: { maxParamLength: HTTP_MAX_PARAM_LENGTH },
+  });
+}
 
 export function configureApp(app: NestFastifyApplication): void {
   app.setGlobalPrefix(API_GLOBAL_PREFIX, { exclude: [HEALTH_ROUTE, METRICS_ROUTE] });

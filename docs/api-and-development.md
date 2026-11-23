@@ -167,9 +167,9 @@ Each invariant is tested at the lowest layer that genuinely proves it: pure bran
 
 | Level | Command | Target / Scope | Coverage |
 | --- | --- | --- | --- |
-| **API Unit** | `pnpm --filter @flash-sale/api test:unit` | `apps/api/test/unit/` (pinned `ClockService`, Fastify HTTP/guard specs, `sale-ledger` boundary spec) | 52 files, 485 tests |
+| **API Unit** | `pnpm --filter @flash-sale/api test:unit` | `apps/api/test/unit/` (pinned `ClockService`, Fastify HTTP/guard specs, `sale-ledger` boundary spec) | 52 files, 488 tests |
 | **API Integration & E2E** | `pnpm --filter @flash-sale/api test:integration` | `apps/api/test/integration/` (real PostgreSQL 16, Redis 7, BullMQ; `maxWorkers: 1`, `--detectOpenHandles`) | 32 files (28 integration + 4 E2E), 197 tests |
-| **Web (Vitest + RTL)** | `pnpm --filter @flash-sale/web test` | `apps/web/src/**/__tests__/` (real hooks/components, fake timers, stubbed `fetch` only) | 21 files, 214 tests |
+| **Web (Vitest + RTL)** | `pnpm --filter @flash-sale/web test` | `apps/web/src/**/__tests__/` (real hooks/components, fake timers, stubbed `fetch` only) | 21 files, 215 tests |
 | **Stress Math** | `pnpm test:scripts` | `scripts/stress-math.test.mjs` (`node --test`) | 1 file (10 suites), 19 tests |
 | **Static Checks** | `pnpm lint && pnpm -r typecheck` | Biome (`--error-on-warnings`, `noExplicitAny`, `noConsole`, cognitive complexity <= 10) + TypeScript 6 `strict` | 0 warnings / 0 errors |
 | **Full Verification Gate** | `pnpm verify` | 9 gates: PG & Redis healthy → lint → script tests → typecheck → `api` stopped → Jest `--detectOpenHandles` → Vitest → workspace build | Automated + GitHub Actions CI |

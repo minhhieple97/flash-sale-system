@@ -2,6 +2,7 @@ export const API_GLOBAL_PREFIX = 'api/v1';
 export const DEFAULT_HTTP_PORT = 3000;
 export const HTTP_LISTEN_HOST = '0.0.0.0';
 export const HTTP_BODY_LIMIT_BYTES = 16_384;
+export const HTTP_MAX_PARAM_LENGTH = 400;
 export const MAX_SALE_TOTAL_STOCK = 1_000_000;
 export const HEALTH_ROUTE = 'health';
 export const METRICS_ROUTE = 'metrics';
