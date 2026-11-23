@@ -43,6 +43,11 @@ class HotRouteProbeController {
     return this.warn();
   }
 
+  @Get('products/featured')
+  featuredProduct(): { isAlive: boolean } {
+    return this.warn();
+  }
+
   private warn(): { isAlive: boolean } {
     this.logger.warn('hot route warning');
     return { isAlive: true };
@@ -145,6 +150,7 @@ describe('structured logging', () => {
     ['post', '/api/v1/checkout/purchase'],
     ['get', '/api/v1/flash-sales/current'],
     ['get', '/api/v1/orders/user/buyer-1'],
+    ['get', '/api/v1/products/featured'],
   ] as const)(
     'still writes a warn from hot route %s %s, without binding the request',
     async (method, path) => {

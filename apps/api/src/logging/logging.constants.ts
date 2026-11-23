@@ -11,4 +11,5 @@ export const LOGGER_EXCLUDED_HOT_ROUTES: RouteInfo[] = [
   { path: 'checkout/purchase', method: RequestMethod.POST },
   { path: 'flash-sales/current', method: RequestMethod.GET },
   { path: 'orders/user/:userId', method: RequestMethod.GET },
+  { path: 'products/featured', method: RequestMethod.GET },
 ];
