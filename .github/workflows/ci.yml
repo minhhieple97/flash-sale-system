@@ -81,3 +81,29 @@ jobs:
           REDIS_HOST: 127.0.0.1
           REDIS_PORT: "6379"
           ENABLE_ADMIN_ENDPOINTS: "true"
+
+  browser-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Start full Docker Compose stack
+        run: |
+          docker compose up -d --build --wait
+          curl -fsS --retry 15 --retry-delay 1 --retry-all-errors http://127.0.0.1:8080/health
+        env:
+          ENABLE_ADMIN_ENDPOINTS: "true"
+      - name: Run Playwright browser smoke E2E
+        run: pnpm test:e2e:browser
+      - name: Dump Compose logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Tear down Docker Compose stack
+        if: always()
+        run: docker compose down -v
