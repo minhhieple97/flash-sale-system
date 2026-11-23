@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import {
   type ExecutionContext,
   Logger,
@@ -13,6 +14,18 @@ import {
   UNSUPPORTED_MEDIA_TYPE_MESSAGE,
 } from '../../src/modules/admin/constants/admin.constants';
 import { AdminEndpointsGuard } from '../../src/modules/admin/guards/admin-endpoints.guard';
+
+jest.mock('node:crypto', () => {
+  const actual = jest.requireActual<typeof import('node:crypto')>('node:crypto');
+  return {
+    ...actual,
+    timingSafeEqual: jest.fn((a: NodeJS.ArrayBufferView, b: NodeJS.ArrayBufferView) =>
+      actual.timingSafeEqual(a, b),
+    ),
+  };
+});
+
+const timingSafeEqualMock = timingSafeEqual as jest.MockedFunction<typeof timingSafeEqual>;
 
 function mockConfig(overrides: Partial<AppEnv> = {}): ConfigService<AppEnv, true> {
   const env: Partial<AppEnv> = {
@@ -34,6 +47,7 @@ function mockContext(method = 'POST', headers: Record<string, string | string[] 
 
 describe('AdminEndpointsGuard', () => {
   afterEach(() => {
+    timingSafeEqualMock.mockClear();
     jest.restoreAllMocks();
   });
 
@@ -83,27 +97,58 @@ describe('AdminEndpointsGuard', () => {
     expect(guard.canActivate(mockContext('GET', {}))).toBe(true);
   });
 
-  it.each([undefined, 'wrong', 'secretX'])(
-    'throws 401 when ADMIN_API_KEY is set and x-admin-key is %s',
-    (providedKey) => {
-      const guard = new AdminEndpointsGuard(mockConfig({ ADMIN_API_KEY: 'secret' }));
-      const headers =
-        providedKey === undefined
-          ? { 'content-type': 'application/json' }
-          : { 'content-type': 'application/json', 'x-admin-key': providedKey };
+  it.each([
+    ['missing header', undefined],
+    ['array header', ['secret']],
+  ])('throws 401 without calling timingSafeEqual when x-admin-key is %s', (_label, providedKey) => {
+    const guard = new AdminEndpointsGuard(mockConfig({ ADMIN_API_KEY: 'secret' }));
+    const headers =
+      providedKey === undefined
+        ? { 'content-type': 'application/json' }
+        : { 'content-type': 'application/json', 'x-admin-key': providedKey };
 
-      expect(() => guard.canActivate(mockContext('POST', headers))).toThrow(UnauthorizedException);
+    expect(() => guard.canActivate(mockContext('POST', headers))).toThrow(UnauthorizedException);
+    expect(timingSafeEqualMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['empty key', 'secret', ''],
+    ['shorter key', 'secret', 'sec'],
+    ['longer key', 'secret', 'secret-with-extra-length'],
+    ['same-length wrong key', 'secret', 'wrong!'],
+    ['multi-byte UTF-8 mismatch', 'sëcrét-🔑', 'secret-key'],
+  ])(
+    'throws 401 via constant-time 32-byte digest compare for %s',
+    (_label, configuredKey, providedKey) => {
+      const guard = new AdminEndpointsGuard(mockConfig({ ADMIN_API_KEY: configuredKey }));
+
+      expect(() =>
+        guard.canActivate(
+          mockContext('POST', { 'content-type': 'application/json', 'x-admin-key': providedKey }),
+        ),
+      ).toThrow(UnauthorizedException);
+      expect(timingSafeEqualMock).toHaveBeenCalledTimes(1);
+      const [left, right] = timingSafeEqualMock.mock.calls[0] as [Buffer, Buffer];
+      expect(left.byteLength).toBe(32);
+      expect(right.byteLength).toBe(32);
     },
   );
 
-  it('allows POST when ADMIN_API_KEY matches and content-type is application/json', () => {
-    const guard = new AdminEndpointsGuard(mockConfig({ ADMIN_API_KEY: 'secret' }));
+  it.each([
+    ['ASCII exact match', 'secret'],
+    ['multi-byte UTF-8 exact match', 'sëcrét-🔑'],
+  ])('allows POST when ADMIN_API_KEY matches (%s)', (_label, key) => {
+    const guard = new AdminEndpointsGuard(mockConfig({ ADMIN_API_KEY: key }));
 
     expect(
       guard.canActivate(
-        mockContext('POST', { 'content-type': 'application/json', 'x-admin-key': 'secret' }),
+        mockContext('POST', { 'content-type': 'application/json', 'x-admin-key': key }),
       ),
     ).toBe(true);
+    expect(timingSafeEqualMock).toHaveBeenCalledTimes(1);
+    const [left, right] = timingSafeEqualMock.mock.calls[0] as [Buffer, Buffer];
+    expect(left.byteLength).toBe(32);
+    expect(right.byteLength).toBe(32);
   });
 
   it('warns once on module init when enabled in production without ADMIN_API_KEY', () => {

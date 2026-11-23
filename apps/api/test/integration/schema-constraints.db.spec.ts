@@ -9,6 +9,7 @@ const EXPECTED_CONSTRAINTS = [
   'uq_products_sku',
   'ck_products_original_price_positive',
   'ck_products_sale_price_positive',
+  'ck_products_sale_price_lte_original',
   'fk_flash_sales_product',
   'ck_flash_sales_total_stock_non_negative',
   'ck_flash_sales_remaining_stock_bounds',
@@ -16,8 +17,10 @@ const EXPECTED_CONSTRAINTS = [
   'fk_orders_flash_sale',
   'fk_orders_product',
   'uq_orders_one_per_user',
+  'ck_orders_status_valid',
 ];
 const EXPECTED_INDEXES = ['idx_orders_sale_status_created', 'idx_flash_sales_product_id'];
+const NOT_NULL_VIOLATION = '23502';
 const CHECK_VIOLATION = '23514';
 const UNIQUE_VIOLATION = '23505';
 const WINDOW_START = '2030-01-01T00:00:00Z';
@@ -25,54 +28,53 @@ const WINDOW_END = '2030-01-01T01:00:00Z';
 
 interface PgError {
   code: string;
-  constraint: string;
+  constraint?: string;
+  column?: string;
 }
 
-interface ProductRow {
-  id: string;
-  sku: string;
-  originalPriceCents?: number;
+interface ProductInput {
+  sku?: string;
+  original?: number;
+  sale?: number;
 }
 
-interface SaleRow {
-  id: string;
-  productId: string;
-  totalStock: number;
-  remainingStock: number;
-  endsAt?: string;
-}
-
-async function insertProduct(runner: QueryRunner, product: ProductRow): Promise<void> {
+async function insertProduct(runner: QueryRunner, product: ProductInput = {}): Promise<string> {
+  const id = randomUUID();
   await runner.query(
     `INSERT INTO products (id, sku, name, description, original_price_cents, sale_price_cents)
-     VALUES ($1, $2, 'n', 'd', $3, 50)`,
-    [product.id, product.sku, product.originalPriceCents ?? 100],
+     VALUES ($1, $2, 'n', 'd', $3, $4)`,
+    [id, product.sku ?? randomUUID(), product.original ?? 100, product.sale ?? 50],
   );
+  return id;
 }
 
-async function insertSale(runner: QueryRunner, sale: SaleRow): Promise<void> {
+async function insertSale(
+  runner: QueryRunner,
+  productId: string,
+  total = 5,
+  remaining = 5,
+  endsAt = WINDOW_END,
+): Promise<string> {
+  const id = randomUUID();
   await runner.query(
     `INSERT INTO flash_sales (id, product_id, total_stock, remaining_stock, starts_at, ends_at)
      VALUES ($1, $2, $3, $4, $5, $6)`,
-    [
-      sale.id,
-      sale.productId,
-      sale.totalStock,
-      sale.remainingStock,
-      WINDOW_START,
-      sale.endsAt ?? WINDOW_END,
-    ],
+    [id, productId, total, remaining, WINDOW_START, endsAt],
   );
+  return id;
 }
 
 async function insertOrder(
   runner: QueryRunner,
-  ids: { saleId: string; productId: string; userId: string },
+  saleId: string,
+  productId: string,
+  userId: string,
+  status = 'CONFIRMED',
 ): Promise<void> {
   await runner.query(
-    `INSERT INTO orders (id, flash_sale_id, product_id, user_id)
-     VALUES ($1, $2, $3, $4)`,
-    [randomUUID(), ids.saleId, ids.productId, ids.userId],
+    `INSERT INTO orders (id, flash_sale_id, product_id, user_id, status)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [randomUUID(), saleId, productId, userId, status],
   );
 }
 
@@ -111,110 +113,104 @@ describe('SchemaConstraintsInitializer', () => {
     await moduleRef.close();
   });
 
-  it('creates every named constraint', async () => {
-    const rows: { conname: string }[] = await dataSource.query(
+  it('creates every named constraint and index', async () => {
+    const constraints: { conname: string }[] = await dataSource.query(
       'SELECT conname FROM pg_constraint WHERE conname = ANY($1)',
       [EXPECTED_CONSTRAINTS],
     );
-
-    expect(rows.map((row) => row.conname).sort()).toEqual([...EXPECTED_CONSTRAINTS].sort());
-  });
-
-  it('creates the composite order and flash-sale product indexes', async () => {
-    const rows: { indexname: string }[] = await dataSource.query(
+    const indexes: { indexname: string }[] = await dataSource.query(
       "SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname = ANY($1)",
       [EXPECTED_INDEXES],
     );
 
-    expect(rows.map((row) => row.indexname).sort()).toEqual([...EXPECTED_INDEXES].sort());
+    expect(constraints.map((row) => row.conname).sort()).toEqual([...EXPECTED_CONSTRAINTS].sort());
+    expect(indexes.map((row) => row.indexname).sort()).toEqual([...EXPECTED_INDEXES].sort());
   });
 
-  it('is idempotent when run again', async () => {
+  it('is idempotent and lock-safe when run repeatedly or concurrently', async () => {
     await expect(initializer.onModuleInit()).resolves.toBeUndefined();
-  });
-
-  it('is lock-safe when run concurrently', async () => {
     const runs = Promise.all([initializer.onModuleInit(), initializer.onModuleInit()]);
-
     await expect(runs).resolves.toEqual([undefined, undefined]);
   });
 
-  it('rejects a non-positive original price', async () => {
-    const error = await violationOf((runner) =>
-      insertProduct(runner, { id: randomUUID(), sku: randomUUID(), originalPriceCents: 0 }),
-    );
-
-    expect(error).toMatchObject({
-      code: CHECK_VIOLATION,
-      constraint: 'ck_products_original_price_positive',
+  it.each([
+    ['non-positive original price', { original: 0 }, 'ck_products_original_price_positive'],
+    [
+      'sale price above original price',
+      { original: 100, sale: 101 },
+      'ck_products_sale_price_lte_original',
+    ],
+  ])('rejects product with %s', async (_label, prices, constraint) => {
+    const error = await violationOf(async (runner) => {
+      await insertProduct(runner, prices);
     });
+    expect(error).toMatchObject({ code: CHECK_VIOLATION, constraint });
   });
 
   it('rejects a duplicate sku', async () => {
     const sku = randomUUID();
-
     const error = await violationOf(async (runner) => {
-      await insertProduct(runner, { id: randomUUID(), sku });
-      await insertProduct(runner, { id: randomUUID(), sku });
+      await insertProduct(runner, { sku });
+      await insertProduct(runner, { sku });
     });
-
     expect(error).toMatchObject({ code: UNIQUE_VIOLATION, constraint: 'uq_products_sku' });
   });
 
+  it('rejects NULL created_at on products and orders', async () => {
+    const productError = await violationOf((runner) =>
+      runner.query(
+        `INSERT INTO products (id, sku, name, description, original_price_cents, sale_price_cents, created_at)
+         VALUES ($1, $2, 'n', 'd', 100, 50, NULL)`,
+        [randomUUID(), randomUUID()],
+      ),
+    );
+    const orderError = await violationOf(async (runner) => {
+      const productId = await insertProduct(runner);
+      const saleId = await insertSale(runner, productId, 5, 5);
+      await runner.query(
+        `INSERT INTO orders (id, flash_sale_id, product_id, user_id, created_at)
+         VALUES ($1, $2, $3, $4, NULL)`,
+        [randomUUID(), saleId, productId, randomUUID()],
+      );
+    });
+
+    expect(productError).toMatchObject({ code: NOT_NULL_VIOLATION, column: 'created_at' });
+    expect(orderError).toMatchObject({ code: NOT_NULL_VIOLATION, column: 'created_at' });
+  });
+
   it.each([
-    ['negative remaining stock', { total: 5, remaining: -1 }],
-    ['remaining stock above total', { total: 5, remaining: 6 }],
-  ])('rejects %s', async (_name, stock) => {
-    const productId = randomUUID();
-
+    ['negative remaining stock', 5, -1, WINDOW_END, 'ck_flash_sales_remaining_stock_bounds'],
+    ['remaining stock above total', 5, 6, WINDOW_END, 'ck_flash_sales_remaining_stock_bounds'],
+    ['window ending at start', 5, 5, WINDOW_START, 'ck_flash_sales_window'],
+  ])('rejects flash_sales with %s', async (_label, total, remaining, endsAt, constraint) => {
     const error = await violationOf(async (runner) => {
-      await insertProduct(runner, { id: productId, sku: randomUUID() });
-      await insertSale(runner, {
-        id: randomUUID(),
-        productId,
-        totalStock: stock.total,
-        remainingStock: stock.remaining,
-      });
+      const productId = await insertProduct(runner);
+      await insertSale(runner, productId, total, remaining, endsAt);
+    });
+    expect(error).toMatchObject({ code: CHECK_VIOLATION, constraint });
+  });
+
+  it('rejects duplicate user orders and invalid order status', async () => {
+    const duplicateError = await violationOf(async (runner) => {
+      const productId = await insertProduct(runner);
+      const saleId = await insertSale(runner, productId, 5, 5);
+      const userId = randomUUID();
+      await insertOrder(runner, saleId, productId, userId);
+      await insertOrder(runner, saleId, productId, userId);
+    });
+    const statusError = await violationOf(async (runner) => {
+      const productId = await insertProduct(runner);
+      const saleId = await insertSale(runner, productId, 5, 5);
+      await insertOrder(runner, saleId, productId, randomUUID(), 'PENDING');
     });
 
-    expect(error).toMatchObject({
+    expect(duplicateError).toMatchObject({
+      code: UNIQUE_VIOLATION,
+      constraint: 'uq_orders_one_per_user',
+    });
+    expect(statusError).toMatchObject({
       code: CHECK_VIOLATION,
-      constraint: 'ck_flash_sales_remaining_stock_bounds',
+      constraint: 'ck_orders_status_valid',
     });
-  });
-
-  it('rejects a window that ends when it starts', async () => {
-    const productId = randomUUID();
-
-    const error = await violationOf(async (runner) => {
-      await insertProduct(runner, { id: productId, sku: randomUUID() });
-      await insertSale(runner, {
-        id: randomUUID(),
-        productId,
-        totalStock: 5,
-        remainingStock: 5,
-        endsAt: WINDOW_START,
-      });
-    });
-
-    expect(error).toMatchObject({ code: CHECK_VIOLATION, constraint: 'ck_flash_sales_window' });
-  });
-
-  it('rejects a second order for the same sale and user', async () => {
-    const ids = { saleId: randomUUID(), productId: randomUUID(), userId: randomUUID() };
-
-    const error = await violationOf(async (runner) => {
-      await insertProduct(runner, { id: ids.productId, sku: randomUUID() });
-      await insertSale(runner, {
-        id: ids.saleId,
-        productId: ids.productId,
-        totalStock: 5,
-        remainingStock: 5,
-      });
-      await insertOrder(runner, ids);
-      await insertOrder(runner, ids);
-    });
-
-    expect(error).toMatchObject({ code: UNIQUE_VIOLATION, constraint: 'uq_orders_one_per_user' });
   });
 });

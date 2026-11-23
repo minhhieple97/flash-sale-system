@@ -7,10 +7,11 @@ export const SCHEMA_DDL: readonly string[] = [
     original_price_cents INTEGER NOT NULL,
     sale_price_cents INTEGER NOT NULL,
     image_url VARCHAR(512),
-    created_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_products_sku UNIQUE (sku),
     CONSTRAINT ck_products_original_price_positive CHECK (original_price_cents > 0),
-    CONSTRAINT ck_products_sale_price_positive CHECK (sale_price_cents > 0)
+    CONSTRAINT ck_products_sale_price_positive CHECK (sale_price_cents > 0),
+    CONSTRAINT ck_products_sale_price_lte_original CHECK (sale_price_cents <= original_price_cents)
   )`,
   `CREATE TABLE IF NOT EXISTS flash_sales (
     id UUID PRIMARY KEY,
@@ -33,12 +34,38 @@ export const SCHEMA_DDL: readonly string[] = [
     product_id UUID NOT NULL,
     user_id VARCHAR(128) NOT NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'CONFIRMED',
-    created_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT fk_orders_flash_sale FOREIGN KEY (flash_sale_id)
       REFERENCES flash_sales (id) ON DELETE CASCADE,
     CONSTRAINT fk_orders_product FOREIGN KEY (product_id) REFERENCES products (id),
-    CONSTRAINT uq_orders_one_per_user UNIQUE (flash_sale_id, user_id)
+    CONSTRAINT uq_orders_one_per_user UNIQUE (flash_sale_id, user_id),
+    CONSTRAINT ck_orders_status_valid CHECK (status IN ('CONFIRMED'))
   )`,
+  `UPDATE products SET created_at = NOW() WHERE created_at IS NULL`,
+  `ALTER TABLE products ALTER COLUMN created_at SET NOT NULL`,
+  `UPDATE orders SET created_at = NOW() WHERE created_at IS NULL`,
+  `ALTER TABLE orders ALTER COLUMN created_at SET NOT NULL`,
+  `DO $$ BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'ck_products_sale_price_lte_original'
+        AND conrelid = 'products'::regclass
+    ) THEN
+      ALTER TABLE products
+        ADD CONSTRAINT ck_products_sale_price_lte_original
+        CHECK (sale_price_cents <= original_price_cents);
+    END IF;
+  END; $$`,
+  `DO $$ BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'ck_orders_status_valid'
+        AND conrelid = 'orders'::regclass
+    ) THEN
+      ALTER TABLE orders
+        ADD CONSTRAINT ck_orders_status_valid CHECK (status IN ('CONFIRMED'));
+    END IF;
+  END; $$`,
   `CREATE INDEX IF NOT EXISTS idx_orders_sale_status_created ON orders (flash_sale_id, status, created_at, id)`,
   `CREATE INDEX IF NOT EXISTS idx_flash_sales_product_id ON flash_sales (product_id)`,
 ];

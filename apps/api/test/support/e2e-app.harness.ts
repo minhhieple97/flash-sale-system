@@ -2,7 +2,11 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { DataSource } from 'typeorm';
 import { configureApp, createFastifyAdapter } from '../../src/app.setup';
 import { ACTIVE_FLASH_SALE_ID } from '../../src/modules/flash-sales/constants/flash-sales.constants';
-import { createAppTestingModule } from './app-module.testing';
+import {
+  createIsolatedAppTestingModule,
+  DEFAULT_E2E_ENV_OVERRIDES,
+  withIsolatedEnv,
+} from './isolated-env';
 import {
   flashSaleConfigKey,
   flashSaleStockKey,
@@ -41,6 +45,10 @@ export interface E2eApp {
   close(): Promise<void>;
 }
 
+interface Closeable {
+  close(): Promise<void>;
+}
+
 async function send(url: string, init?: RequestInit): Promise<HttpReply> {
   const response = await fetch(url, init);
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
@@ -54,18 +62,20 @@ function postJson(url: string, body: unknown): Promise<HttpReply> {
   });
 }
 
-/** The full AppModule listening on an ephemeral loopback port, driven over real HTTP. */
-export async function startE2eApp(): Promise<E2eApp> {
-  const moduleRef = await createAppTestingModule().compile();
-  const app = moduleRef.createNestApplication<NestFastifyApplication>(createFastifyAdapter(), {
-    logger: false,
-  });
-  configureApp(app);
-  await app.listen(EPHEMERAL_PORT, LOOPBACK_HOST);
-  const baseUrl = `${await app.getUrl()}${API_PREFIX}`;
+async function closeAndRestore(
+  closeable: Closeable | undefined,
+  restoreEnv: () => void,
+): Promise<void> {
+  try {
+    await closeable?.close();
+  } finally {
+    restoreEnv();
+  }
+}
+
+function buildE2eApp(app: NestFastifyApplication, baseUrl: string, restoreEnv: () => void): E2eApp {
   const redis = app.get<SaleLedgerRedis>(SALE_LEDGER_REDIS, { strict: false });
   const dataSource = app.get(DataSource, { strict: false });
-
   const reset = (body: ResetBody = {}): Promise<HttpReply> =>
     postJson(`${baseUrl}/admin/flash-sales/reset`, body);
   const lookup = (userId: string): Promise<HttpReply> =>
@@ -97,16 +107,37 @@ export async function startE2eApp(): Promise<E2eApp> {
       waitFor(
         () => lookup(userId),
         (reply) => reply.body.status === 'CONFIRMED',
-        {
-          timeoutMs: WORKER_TIMEOUT_MS,
-        },
+        { timeoutMs: WORKER_TIMEOUT_MS },
       ),
     async close() {
       try {
         await reset({});
       } finally {
-        await app.close();
+        await closeAndRestore(app, restoreEnv);
       }
     },
   };
+}
+
+/** The full AppModule listening on an ephemeral loopback port, driven over real HTTP. */
+export async function startE2eApp(
+  envOverrides: Readonly<Record<string, string>> = {},
+): Promise<E2eApp> {
+  const restoreEnv = withIsolatedEnv({ ...DEFAULT_E2E_ENV_OVERRIDES, ...envOverrides });
+  let closeable: Closeable | undefined;
+  try {
+    const moduleRef = await (await createIsolatedAppTestingModule()).compile();
+    closeable = moduleRef;
+    const app = moduleRef.createNestApplication<NestFastifyApplication>(createFastifyAdapter(), {
+      logger: false,
+    });
+    closeable = app;
+    configureApp(app);
+    await app.listen(EPHEMERAL_PORT, LOOPBACK_HOST);
+    const baseUrl = `${await app.getUrl()}${API_PREFIX}`;
+    return buildE2eApp(app, baseUrl, restoreEnv);
+  } catch (error) {
+    await closeAndRestore(closeable, restoreEnv);
+    throw error;
+  }
 }

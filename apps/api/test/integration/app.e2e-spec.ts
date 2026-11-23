@@ -1,35 +1,57 @@
 import { randomUUID } from 'node:crypto';
-import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
+import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Queue } from 'bullmq';
 import request from 'supertest';
-import { configureApp } from '../../src/app.setup';
+import { configureApp, createFastifyAdapter } from '../../src/app.setup';
 import { ORDER_PERSISTENCE_PRODUCER } from '../../src/infrastructure/queue/queue.constants';
 import { FlashSaleResetService } from '../../src/modules/admin/services/flash-sale-reset.service';
 import {
   ACTIVE_FLASH_SALE_ID,
   SALE_WINDOW_DEFAULTS,
 } from '../../src/modules/flash-sales/constants/flash-sales.constants';
-import { createAppTestingModule } from '../support/app-module.testing';
+import { startE2eApp } from '../support/e2e-app.harness';
+import {
+  createIsolatedAppTestingModule,
+  DEFAULT_E2E_ENV_OVERRIDES,
+  withIsolatedEnv,
+} from '../support/isolated-env';
 import { flashSaleStockKey, SALE_LEDGER_REDIS, type SaleLedgerRedis } from '../support/ledger-keys';
 
 describe('AppModule (e2e)', () => {
-  let app: NestFastifyApplication;
+  let app!: NestFastifyApplication;
+  let restoreEnv: () => void = () => undefined;
 
   beforeAll(async () => {
-    const moduleRef = await createAppTestingModule().compile();
-    app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter(), {
-      logger: false,
-    });
-    configureApp(app);
-    await app.init();
-    await app.getHttpAdapter().getInstance().ready();
+    restoreEnv = withIsolatedEnv(DEFAULT_E2E_ENV_OVERRIDES);
+    let started: NestFastifyApplication | undefined;
+    try {
+      const moduleRef = await (await createIsolatedAppTestingModule()).compile();
+      started = moduleRef.createNestApplication<NestFastifyApplication>(createFastifyAdapter(), {
+        logger: false,
+      });
+      configureApp(started);
+      await started.init();
+      await started.getHttpAdapter().getInstance().ready();
+      app = started;
+    } catch (error) {
+      try {
+        await started?.close();
+      } finally {
+        restoreEnv();
+      }
+      throw error;
+    }
   });
 
   afterAll(async () => {
     try {
-      await app.get(FlashSaleResetService, { strict: false }).reset({});
+      if (app) await app.get(FlashSaleResetService, { strict: false }).reset({});
     } finally {
-      await app.close();
+      try {
+        if (app) await app.close();
+      } finally {
+        restoreEnv();
+      }
     }
   });
 
@@ -142,5 +164,43 @@ describe('AppModule (e2e)', () => {
         .get<SaleLedgerRedis>(SALE_LEDGER_REDIS, { strict: false })
         .get(flashSaleStockKey(ACTIVE_FLASH_SALE_ID)),
     ).resolves.toBe('7');
+  });
+});
+
+describe('startE2eApp env isolation (e2e)', () => {
+  it('isolates pre-set ADMIN_API_KEY, ENABLE_ADMIN_ENDPOINTS, and RATE_LIMIT_ENABLED and restores them on close', async () => {
+    const restorePollutedEnv = withIsolatedEnv({
+      ADMIN_API_KEY: 'pre-set-secret',
+      ENABLE_ADMIN_ENDPOINTS: 'false',
+      RATE_LIMIT_ENABLED: 'true',
+      RATE_LIMIT_MAX: '1',
+    });
+    let isolatedApp: Awaited<ReturnType<typeof startE2eApp>> | undefined;
+    try {
+      try {
+        isolatedApp = await startE2eApp();
+
+        const reset = await isolatedApp.reset({
+          totalStock: 5,
+          startsOffsetSeconds: -60,
+          durationSeconds: 3600,
+        });
+        const first = await isolatedApp.purchase({ userId: randomUUID() });
+        const second = await isolatedApp.purchase({ userId: randomUUID() });
+        await isolatedApp.waitForOrderRows(2);
+
+        expect(reset.status).toBe(200);
+        expect(first.status).toBe(202);
+        expect(second.status).toBe(202);
+      } finally {
+        await isolatedApp?.close();
+      }
+
+      expect(process.env.ADMIN_API_KEY).toBe('pre-set-secret');
+      expect(process.env.ENABLE_ADMIN_ENDPOINTS).toBe('false');
+      expect(process.env.RATE_LIMIT_ENABLED).toBe('true');
+    } finally {
+      restorePollutedEnv();
+    }
   });
 });

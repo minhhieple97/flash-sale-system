@@ -25,11 +25,11 @@ const HAS_CONFIRMED_SQL = 'SELECT 1 FROM orders WHERE flash_sale_id = $1 AND sta
 const LIST_CONFIRMED_FIRST_SQL = `
   SELECT id, user_id, created_at::text AS created_at FROM orders
   WHERE flash_sale_id = $1 AND status = $2
-  ORDER BY created_at, id LIMIT $3`;
+  ORDER BY orders.created_at, orders.id LIMIT $3`;
 const LIST_CONFIRMED_AFTER_SQL = `
   SELECT id, user_id, created_at::text AS created_at FROM orders
-  WHERE flash_sale_id = $1 AND status = $2 AND (created_at, id) > ($3, $4)
-  ORDER BY created_at, id LIMIT $5`;
+  WHERE flash_sale_id = $1 AND status = $2 AND (created_at, id) > ($3::timestamptz, $4)
+  ORDER BY orders.created_at, orders.id LIMIT $5`;
 
 interface IdRow {
   id: string;

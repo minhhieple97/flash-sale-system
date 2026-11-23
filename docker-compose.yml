@@ -78,6 +78,12 @@ services:
       dockerfile: apps/web/Dockerfile
     ports:
       - "127.0.0.1:${WEB_PORT:-8080}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
     depends_on:
       api:
         condition: service_healthy

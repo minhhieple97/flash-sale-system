@@ -14,7 +14,11 @@ import { OrdersRepository } from '../../src/modules/orders/repositories/orders.r
 import { FEATURED_PRODUCT_ID } from '../../src/modules/products/products.types';
 import type { ReservationRef } from '../../src/modules/sale-ledger';
 import { SaleLedgerRepository } from '../../src/modules/sale-ledger';
-import { createAppTestingModule } from './app-module.testing';
+import {
+  createIsolatedAppTestingModule,
+  DEFAULT_E2E_ENV_OVERRIDES,
+  withIsolatedEnv,
+} from './isolated-env';
 import {
   flashSaleConfigKey,
   flashSaleStockKey,
@@ -46,9 +50,18 @@ export interface RealSaleHarness {
   close(): Promise<void>;
 }
 
-export async function createRealSaleHarness(): Promise<RealSaleHarness> {
-  const moduleRef = await createAppTestingModule().compile();
-  await moduleRef.init();
+async function closeAndRestore(
+  moduleRef: TestingModule | undefined,
+  restoreEnv: () => void,
+): Promise<void> {
+  try {
+    await moduleRef?.close();
+  } finally {
+    restoreEnv();
+  }
+}
+
+function buildRealSaleHarness(moduleRef: TestingModule, restoreEnv: () => void): RealSaleHarness {
   const get = <T>(token: Parameters<TestingModule['get']>[0]): T =>
     moduleRef.get<T>(token, { strict: false });
   const redis = get<SaleLedgerRedis>(SALE_LEDGER_REDIS);
@@ -91,9 +104,27 @@ export async function createRealSaleHarness(): Promise<RealSaleHarness> {
       return RUNNABLE_JOB_STATES.reduce((total, state) => total + counts[state], 0);
     },
     close: async () => {
-      await queue.resume();
-      await resetService.reset({});
-      await moduleRef.close();
+      try {
+        await queue.resume();
+        await resetService.reset({});
+      } finally {
+        await closeAndRestore(moduleRef, restoreEnv);
+      }
     },
   };
+}
+
+export async function createRealSaleHarness(
+  envOverrides: Readonly<Record<string, string>> = {},
+): Promise<RealSaleHarness> {
+  const restoreEnv = withIsolatedEnv({ ...DEFAULT_E2E_ENV_OVERRIDES, ...envOverrides });
+  let moduleRef: TestingModule | undefined;
+  try {
+    moduleRef = await (await createIsolatedAppTestingModule()).compile();
+    await moduleRef.init();
+    return buildRealSaleHarness(moduleRef, restoreEnv);
+  } catch (error) {
+    await closeAndRestore(moduleRef, restoreEnv);
+    throw error;
+  }
 }

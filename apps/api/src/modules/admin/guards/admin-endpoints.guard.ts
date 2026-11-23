@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import {
   type CanActivate,
   type ExecutionContext,
@@ -23,12 +23,13 @@ import {
   UNSUPPORTED_MEDIA_TYPE_MESSAGE,
 } from '../constants/admin.constants';
 
+function sha256Digest(value: string): Buffer {
+  return createHash('sha256').update(value, 'utf8').digest();
+}
+
 function keysMatch(expected: string, provided: unknown): boolean {
   if (typeof provided !== 'string') return false;
-  const expectedBuf = Buffer.from(expected, 'utf8');
-  const providedBuf = Buffer.from(provided, 'utf8');
-  if (expectedBuf.byteLength !== providedBuf.byteLength) return false;
-  return timingSafeEqual(expectedBuf, providedBuf);
+  return timingSafeEqual(sha256Digest(expected), sha256Digest(provided));
 }
 
 function isJsonContentType(contentType: unknown): boolean {
