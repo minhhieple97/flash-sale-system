@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { DynamicModule, Type } from '@nestjs/common';
-import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
+import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import type { AppModule as AppModuleType } from '../../src/app.module';
-import { configureApp } from '../../src/app.setup';
-import { ERROR_CODES } from '../../src/common/constants/common.constants';
+import { configureApp, createFastifyAdapter } from '../../src/app.setup';
+import { ERROR_CODES, REQUEST_ID_HEADER } from '../../src/common/constants/common.constants';
 import {
   LEDGER_MAINTENANCE_INTERVAL,
   MAINTENANCE_DISABLED,
@@ -13,6 +13,8 @@ import {
 } from '../../src/modules/admin/constants/admin.constants';
 import { FlashSaleResetService } from '../../src/modules/admin/services/flash-sale-reset.service';
 import {
+  DB_POOL_CONNECTIONS_METRIC,
+  HTTP_REQUEST_DURATION_METRIC,
   ORDER_QUEUE_JOBS_METRIC,
   PURCHASE_ATTEMPTS_METRIC,
 } from '../../src/modules/metrics/constants/metrics.constants';
@@ -20,6 +22,7 @@ import {
 const ADMIN_KEY = 'secret-key';
 const RESET_PATH = '/api/v1/admin/flash-sales/reset';
 const PURCHASE_PATH = '/api/v1/checkout/purchase';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 function withIsolatedEnv(overrides: Readonly<Record<string, string>>): () => void {
   const previous = new Map<string, string | undefined>();
@@ -40,7 +43,7 @@ async function createHttpApp(root: Type<unknown> | DynamicModule): Promise<NestF
     .overrideProvider(LEDGER_MAINTENANCE_INTERVAL)
     .useValue(MAINTENANCE_DISABLED)
     .compile();
-  const app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter(), {
+  const app = moduleRef.createNestApplication<NestFastifyApplication>(createFastifyAdapter(), {
     logger: false,
   });
   configureApp(app);
@@ -116,12 +119,31 @@ describe('operational and security HTTP controls (e2e)', () => {
     expect(Number(third.headers['retry-after'])).toBeGreaterThanOrEqual(1);
   });
 
+  it('echoes valid X-Request-Id headers and generates a UUID when omitted or malformed', async () => {
+    const server = app.getHttpServer();
+
+    const echoed = await request(server).get('/health').set(REQUEST_ID_HEADER, 'e2e-trace-1');
+    const generated = await request(server).get('/health');
+    const replaced = await request(server).get('/health').set(REQUEST_ID_HEADER, 'bad id!');
+
+    expect(echoed.status).toBe(200);
+    expect(echoed.headers['x-request-id']).toBe('e2e-trace-1');
+    expect(generated.headers['x-request-id']).toMatch(UUID_PATTERN);
+    expect(replaced.headers['x-request-id']).toMatch(UUID_PATTERN);
+    expect(replaced.headers['x-request-id']).not.toBe('bad id!');
+  });
+
   it('serves Prometheus text metrics on GET /metrics', async () => {
-    const response = await request(app.getHttpServer()).get('/metrics');
+    const server = app.getHttpServer();
+    await request(server).get('/health');
+
+    const response = await request(server).get('/metrics');
 
     expect(response.status).toBe(200);
     expect(response.headers['content-type']).toContain('text/plain');
     expect(response.text).toContain(PURCHASE_ATTEMPTS_METRIC);
     expect(response.text).toContain(ORDER_QUEUE_JOBS_METRIC);
+    expect(response.text).toContain(`${HTTP_REQUEST_DURATION_METRIC}_bucket`);
+    expect(response.text).toContain(DB_POOL_CONNECTIONS_METRIC);
   });
 });

@@ -1,5 +1,5 @@
-import { Body, Controller, Post, Res, UseGuards } from '@nestjs/common';
-import type { FastifyReply } from 'fastify';
+import { Body, Controller, Post, Req, Res, UseGuards } from '@nestjs/common';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { RateLimitGuard } from '../../../common/guards/rate-limit.guard';
 import type { NormalizedUserId } from '../../../common/interfaces/user-id.interface';
 import { NormalizedUserIdPipe } from '../../../common/pipes/normalized-user-id.pipe';
@@ -23,9 +23,10 @@ export class CheckoutController {
   @Post(PURCHASE_ROUTE)
   async purchase(
     @Body(PURCHASE_USER_ID_FIELD, NormalizedUserIdPipe) userId: NormalizedUserId,
+    @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<PurchaseAttemptResponseDto> {
-    const result = await this.checkoutService.attemptPurchase(userId);
+    const result = await this.checkoutService.attemptPurchase(userId, request.id);
     reply.status(PURCHASE_HTTP_STATUS[result.outcome]);
     return toPurchaseAttemptResponse(result);
   }

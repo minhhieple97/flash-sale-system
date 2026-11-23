@@ -56,4 +56,60 @@ describe('MetricsService', () => {
     expect(output).not.toContain('flash_sale_order_queue_jobs{state=');
     expect(warn).toHaveBeenCalledTimes(1);
   });
+
+  it('renders HTTP request latency histogram buckets, sum, and count', async () => {
+    const service = new MetricsService();
+    service.recordHttpRequestDuration({
+      method: 'POST',
+      route: '/api/v1/checkout/purchase',
+      statusCode: 202,
+      durationSeconds: 0.04,
+    });
+
+    const output = await service.render();
+
+    expect(output).toContain('# TYPE flash_sale_http_request_duration_seconds histogram');
+    expect(output).toContain(
+      'flash_sale_http_request_duration_seconds_bucket{method="POST",route="/api/v1/checkout/purchase",status_class="2xx",le="0.05"} 1',
+    );
+    expect(output).toContain(
+      'flash_sale_http_request_duration_seconds_sum{method="POST",route="/api/v1/checkout/purchase",status_class="2xx"} 0.04',
+    );
+    expect(output).toContain(
+      'flash_sale_http_request_duration_seconds_count{method="POST",route="/api/v1/checkout/purchase",status_class="2xx"} 1',
+    );
+  });
+
+  it('renders PostgreSQL connection pool counts from a registered collector', async () => {
+    const service = new MetricsService();
+    service.registerDbPoolCollector(() => ({ total: 10, idle: 6, waiting: 1 }));
+
+    const output = await service.render();
+
+    expect(output).toContain('# TYPE flash_sale_db_pool_connections gauge');
+    expect(output).toContain('flash_sale_db_pool_connections{state="total"} 10');
+    expect(output).toContain('flash_sale_db_pool_connections{state="idle"} 6');
+    expect(output).toContain('flash_sale_db_pool_connections{state="waiting"} 1');
+  });
+
+  it('swallows DB pool collector errors and unavailable pool reads gracefully', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    const service = new MetricsService();
+    service.recordPurchaseAttempt('RESERVED');
+    service.registerDbPoolCollector(async () => {
+      throw new Error('pool closed');
+    });
+
+    const afterError = await service.render();
+
+    expect(afterError).toContain('flash_sale_purchase_attempts_total{outcome="RESERVED"} 1');
+    expect(afterError).not.toContain('flash_sale_db_pool_connections');
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    service.registerDbPoolCollector(() => null);
+    const afterNull = await service.render();
+
+    expect(afterNull).not.toContain('flash_sale_db_pool_connections');
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
 });

@@ -8,8 +8,12 @@ import {
   HTTP_BODY_LIMIT_BYTES,
   HTTP_MAX_PARAM_LENGTH,
   METRICS_ROUTE,
+  REQUEST_ID_HEADER,
   USER_ID_MAX_LENGTH,
 } from '../../src/common/constants/common.constants';
+import { MetricsModule } from '../../src/modules/metrics/metrics.module';
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 @Controller(HEALTH_ROUTE)
 class HealthProbeController {
@@ -115,5 +119,81 @@ describe('configureApp', () => {
     const response = await request(app.getHttpServer()).get(`/api/v1/echo/user/${tooLong}`);
 
     expect(response.status).toBe(414);
+  });
+
+  it('generates a UUID X-Request-Id when omitted and echoes it on success and error responses', async () => {
+    const ok = await request(app.getHttpServer()).get('/health');
+    const missing = await request(app.getHttpServer()).get('/does-not-exist');
+
+    expect(ok.headers['x-request-id']).toMatch(UUID_PATTERN);
+    expect(missing.headers['x-request-id']).toMatch(UUID_PATTERN);
+    expect(ok.headers['x-request-id']).not.toBe(missing.headers['x-request-id']);
+  });
+
+  it('reuses a safe incoming X-Request-Id header verbatim', async () => {
+    const clientRequestId = 'trace-01.abc_DEF:99';
+
+    const response = await request(app.getHttpServer())
+      .get('/health')
+      .set(REQUEST_ID_HEADER, clientRequestId);
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-request-id']).toBe(clientRequestId);
+  });
+
+  it.each([
+    ['whitespace', 'bad request id'],
+    ['special characters', 'req;injected=1'],
+    ['over 64 characters', 'a'.repeat(65)],
+    ['empty value', ''],
+  ])('replaces malformed X-Request-Id (%s) with a generated UUID', async (_label, badId) => {
+    const response = await request(app.getHttpServer())
+      .get('/health')
+      .set(REQUEST_ID_HEADER, badId);
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-request-id']).toMatch(UUID_PATTERN);
+    expect(response.headers['x-request-id']).not.toBe(badId);
+  });
+});
+
+describe('configureApp with MetricsModule', () => {
+  let app: NestFastifyApplication;
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [MetricsModule],
+      controllers: [HealthProbeController, EchoProbeController],
+    }).compile();
+    app = moduleRef.createNestApplication<NestFastifyApplication>(createFastifyAdapter(), {
+      logger: false,
+    });
+    configureApp(app);
+    await app.init();
+    await app.getHttpAdapter().getInstance().ready();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('records HTTP duration using bounded route templates and skips /metrics self-scrapes', async () => {
+    await request(app.getHttpServer()).get('/api/v1/echo/user/alice-sensitive-id');
+    await request(app.getHttpServer()).get('/random-404-url-98765');
+
+    const metricsResponse = await request(app.getHttpServer()).get('/metrics');
+
+    expect(metricsResponse.status).toBe(200);
+    expect(metricsResponse.text).toContain(
+      'flash_sale_http_request_duration_seconds_count{method="GET",route="/api/v1/echo/user/:userId",status_class="2xx"} 1',
+    );
+    expect(metricsResponse.text).not.toContain('alice-sensitive-id');
+    expect(metricsResponse.text).toContain(
+      'flash_sale_http_request_duration_seconds_count{method="GET",route="UNMATCHED",status_class="4xx"} 1',
+    );
+    expect(metricsResponse.text).not.toContain('random-404-url-98765');
+
+    const secondScrape = await request(app.getHttpServer()).get('/metrics');
+    expect(secondScrape.text).not.toContain('route="/metrics"');
   });
 });

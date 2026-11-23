@@ -1,5 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { HttpLatencyHistogram } from '../collectors/http-latency-histogram';
 import {
+  DB_POOL_CONNECTIONS_HELP,
+  DB_POOL_CONNECTIONS_METRIC,
+  DB_POOL_STATES,
   ORDER_PERSISTENCE_HELP,
   ORDER_PERSISTENCE_METRIC,
   ORDER_QUEUE_JOBS_HELP,
@@ -8,11 +12,12 @@ import {
   PURCHASE_ATTEMPTS_METRIC,
   QUEUE_JOB_STATES,
 } from '../constants/metrics.constants';
-import type { QueueJobCountsCollector } from '../interfaces/metrics.interface';
-
-function escapeLabelValue(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
-}
+import type {
+  DbPoolCountsCollector,
+  HttpDurationObservation,
+  QueueJobCountsCollector,
+} from '../interfaces/metrics.interface';
+import { escapeLabelValue, renderStateGauge } from '../utils/prometheus.util';
 
 function increment(map: Map<string, number>, key: string): void {
   map.set(key, (map.get(key) ?? 0) + 1);
@@ -31,7 +36,9 @@ export class MetricsService {
   private readonly logger = new Logger(MetricsService.name);
   private readonly purchaseAttempts = new Map<string, number>();
   private readonly orderPersistence = new Map<string, number>();
+  private readonly httpLatency = new HttpLatencyHistogram();
   private queueCollector: QueueJobCountsCollector | null = null;
+  private dbPoolCollector: DbPoolCountsCollector | null = null;
 
   recordPurchaseAttempt(outcome: string): void {
     increment(this.purchaseAttempts, outcome);
@@ -41,15 +48,25 @@ export class MetricsService {
     increment(this.orderPersistence, outcome);
   }
 
+  recordHttpRequestDuration(observation: HttpDurationObservation): void {
+    this.httpLatency.observe(observation);
+  }
+
   registerQueueCollector(collector: QueueJobCountsCollector): void {
     this.queueCollector = collector;
+  }
+
+  registerDbPoolCollector(collector: DbPoolCountsCollector): void {
+    this.dbPoolCollector = collector;
   }
 
   async render(): Promise<string> {
     const sections = [
       ...renderCounter(PURCHASE_ATTEMPTS_METRIC, PURCHASE_ATTEMPTS_HELP, this.purchaseAttempts),
       ...renderCounter(ORDER_PERSISTENCE_METRIC, ORDER_PERSISTENCE_HELP, this.orderPersistence),
+      ...this.httpLatency.render(),
       ...(await this.renderQueueGauge()),
+      ...(await this.renderDbPoolGauge()),
     ];
     return `${sections.join('\n')}\n`;
   }
@@ -58,16 +75,34 @@ export class MetricsService {
     if (this.queueCollector === null) return [];
     try {
       const counts = await this.queueCollector();
-      const lines = [
-        `# HELP ${ORDER_QUEUE_JOBS_METRIC} ${ORDER_QUEUE_JOBS_HELP}`,
-        `# TYPE ${ORDER_QUEUE_JOBS_METRIC} gauge`,
-      ];
-      for (const state of QUEUE_JOB_STATES) {
-        lines.push(`${ORDER_QUEUE_JOBS_METRIC}{state="${state}"} ${counts[state] ?? 0}`);
-      }
-      return lines;
+      return renderStateGauge({
+        name: ORDER_QUEUE_JOBS_METRIC,
+        help: ORDER_QUEUE_JOBS_HELP,
+        states: QUEUE_JOB_STATES,
+        counts,
+      });
     } catch (error) {
       this.logger.warn(`Failed to collect queue metrics: ${String(error)}`);
+      return [];
+    }
+  }
+
+  private async renderDbPoolGauge(): Promise<string[]> {
+    if (this.dbPoolCollector === null) return [];
+    try {
+      const counts = await this.dbPoolCollector();
+      if (counts === null) {
+        this.logger.warn('PostgreSQL pool metrics unavailable; skipping gauge');
+        return [];
+      }
+      return renderStateGauge({
+        name: DB_POOL_CONNECTIONS_METRIC,
+        help: DB_POOL_CONNECTIONS_HELP,
+        states: DB_POOL_STATES,
+        counts,
+      });
+    } catch (error) {
+      this.logger.warn(`Failed to collect database pool metrics: ${String(error)}`);
       return [];
     }
   }

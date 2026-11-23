@@ -3,8 +3,13 @@ import type {
   ConfirmedReservation,
   ConfirmOutcome,
   ReleaseOutcome,
+  ReservationRef,
   ReservationSlot,
 } from '../../sale-ledger';
+
+export interface OrderJobData extends ReservationRef {
+  readonly requestId?: string;
+}
 
 export interface ConfirmedBatchCursor {
   createdAt: string;

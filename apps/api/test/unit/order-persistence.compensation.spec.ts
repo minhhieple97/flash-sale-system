@@ -114,5 +114,18 @@ describe('OrderPersistenceService compensation', () => {
 
       await expect(service.scheduleCompensation(REF)).rejects.toThrow('redis down');
     });
+
+    it('preserves requestId in the enqueued compensation job payload', async () => {
+      const { service, queue } = buildPersistenceService();
+      const jobData = { ...REF, requestId: 'req-comp-5' };
+      queue.add.mockResolvedValue({});
+
+      await service.scheduleCompensation(jobData);
+
+      expect(queue.add).toHaveBeenCalledWith(ORDER_COMPENSATION_JOB_NAME, jobData, {
+        ...ORDER_COMPENSATION_JOB_OPTIONS,
+        jobId: `compensate-${REF.orderId}`,
+      });
+    });
   });
 });

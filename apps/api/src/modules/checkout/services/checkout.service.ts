@@ -4,8 +4,10 @@ import { ERROR_CODES } from '../../../common/constants/common.constants';
 import { temporaryFailure } from '../../../common/errors/temporary-failure.error';
 import type { NormalizedUserId } from '../../../common/interfaces/user-id.interface';
 import { ClockService } from '../../../common/providers/clock.service';
+import { formatRequestTag } from '../../../common/utils/request-id.util';
 import { ACTIVE_FLASH_SALE_ID } from '../../flash-sales/constants/flash-sales.constants';
 import { MetricsService } from '../../metrics/services/metrics.service';
+import type { OrderJobData } from '../../orders/interfaces/order.interface';
 import { OrderPersistenceService } from '../../orders/services/order-persistence.service';
 import { type ReservationRef, SaleLedgerRepository } from '../../sale-ledger';
 import type { PurchaseAttemptResult } from '../interfaces/checkout.interface';
@@ -34,29 +36,40 @@ export class CheckoutService {
    * Infrastructure faults convert to ServiceUnavailableException({ code: TEMPORARY_FAILURE }),
    * while programming/corrupt-reply errors rethrow to GlobalExceptionFilter -> 500 INTERNAL_ERROR.
    */
-  async attemptPurchase(userId: NormalizedUserId): Promise<PurchaseAttemptResult> {
+  async attemptPurchase(
+    userId: NormalizedUserId,
+    requestId?: string,
+  ): Promise<PurchaseAttemptResult> {
     const ref: ReservationRef = { saleId: ACTIVE_FLASH_SALE_ID, userId, orderId: randomUUID() };
     try {
-      const result = await this.reserveAndSchedule(ref);
+      const result = await this.reserveAndSchedule(ref, requestId);
       this.metrics?.recordPurchaseAttempt(result.outcome);
       return result;
     } catch (error) {
       if (isUnexpectedBugError(error)) throw error;
       this.metrics?.recordPurchaseAttempt(ERROR_CODES.TEMPORARY_FAILURE);
       if (error instanceof ServiceUnavailableException) throw error;
-      this.logger.warn(`Purchase attempt failed for order ${ref.orderId}: ${String(error)}`);
+      this.logger.warn(
+        `${formatRequestTag(requestId)}Purchase attempt failed for order ${ref.orderId}: ${String(error)}`,
+      );
       throw temporaryFailure();
     }
   }
 
-  private async reserveAndSchedule(ref: ReservationRef): Promise<PurchaseAttemptResult> {
+  private async reserveAndSchedule(
+    ref: ReservationRef,
+    requestId?: string,
+  ): Promise<PurchaseAttemptResult> {
     const verdict = await this.ledger.reserve({ ...ref, nowMs: this.clock.nowMs() });
     if (verdict === 'SALE_NOT_CONFIGURED') {
-      this.logger.warn(`Sale ${ref.saleId} is not configured in Redis for order ${ref.orderId}`);
+      this.logger.warn(
+        `${formatRequestTag(requestId)}Sale ${ref.saleId} is not configured in Redis for order ${ref.orderId}`,
+      );
       throw temporaryFailure();
     }
     if (verdict !== 'RESERVED') return { outcome: verdict };
-    if ((await this.orderPersistence.scheduleReservation(ref)) === 'RELEASED') {
+    const jobData: OrderJobData = requestId !== undefined ? { ...ref, requestId } : ref;
+    if ((await this.orderPersistence.scheduleReservation(jobData)) === 'RELEASED') {
       throw temporaryFailure();
     }
     return { outcome: 'RESERVED', orderId: ref.orderId, userId: ref.userId };

@@ -1,10 +1,11 @@
 import { ServiceUnavailableException } from '@nestjs/common';
-import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
+import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { configureApp } from '../../src/app.setup';
+import { configureApp, createFastifyAdapter } from '../../src/app.setup';
 import {
   ERROR_CODES,
+  REQUEST_ID_HEADER,
   TEMPORARY_FAILURE_MESSAGE,
 } from '../../src/common/constants/common.constants';
 import { RateLimitGuard } from '../../src/common/guards/rate-limit.guard';
@@ -28,7 +29,7 @@ const REJECTION_STATUS: ReadonlyArray<[PurchaseRejectionCode, number]> = [
 
 describe('CheckoutController', () => {
   let app: NestFastifyApplication;
-  const attemptPurchase = jest.fn<Promise<PurchaseAttemptResult>, [NormalizedUserId]>();
+  const attemptPurchase = jest.fn<Promise<PurchaseAttemptResult>, [NormalizedUserId, string?]>();
   const canActivate = jest.fn(() => true);
 
   beforeAll(async () => {
@@ -39,7 +40,7 @@ describe('CheckoutController', () => {
       .overrideGuard(RateLimitGuard)
       .useValue({ canActivate })
       .compile();
-    app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter(), {
+    app = moduleRef.createNestApplication<NestFastifyApplication>(createFastifyAdapter(), {
       logger: false,
     });
     configureApp(app);
@@ -117,12 +118,16 @@ describe('CheckoutController', () => {
     });
   });
 
-  it('hands the service the normalized form of a raw user id', async () => {
+  it('hands the service the normalized form of a raw user id and request id', async () => {
     attemptPurchase.mockResolvedValue({ outcome: 'SOLD_OUT' });
 
-    await request(app.getHttpServer()).post(PURCHASE_PATH).send({ userId: '  ALICE@example.com ' });
+    const response = await request(app.getHttpServer())
+      .post(PURCHASE_PATH)
+      .set(REQUEST_ID_HEADER, 'checkout-req-42')
+      .send({ userId: '  ALICE@example.com ' });
 
-    expect(attemptPurchase).toHaveBeenCalledWith('alice@example.com');
+    expect(attemptPurchase).toHaveBeenCalledWith('alice@example.com', 'checkout-req-42');
+    expect(response.headers['x-request-id']).toBe('checkout-req-42');
     expect(canActivate).toHaveBeenCalledTimes(1);
   });
 });

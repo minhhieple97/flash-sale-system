@@ -8,11 +8,13 @@ import type { PurchaseRejectionCode } from '../../src/modules/checkout/interface
 import { CheckoutService } from '../../src/modules/checkout/services/checkout.service';
 import { ACTIVE_FLASH_SALE_ID } from '../../src/modules/flash-sales/constants/flash-sales.constants';
 import type { MetricsService } from '../../src/modules/metrics/services/metrics.service';
-import type { ScheduleReservationOutcome } from '../../src/modules/orders/interfaces/order.interface';
+import type {
+  OrderJobData,
+  ScheduleReservationOutcome,
+} from '../../src/modules/orders/interfaces/order.interface';
 import type { OrderPersistenceService } from '../../src/modules/orders/services/order-persistence.service';
 import type {
   AttemptPurchaseParams,
-  ReservationRef,
   ReservationVerdict,
   SaleLedgerRepository,
 } from '../../src/modules/sale-ledger';
@@ -30,7 +32,7 @@ const REJECTIONS: PurchaseRejectionCode[] = [
 
 function buildService() {
   const reserve = jest.fn<Promise<ReservationVerdict>, [AttemptPurchaseParams]>();
-  const scheduleReservation = jest.fn<Promise<ScheduleReservationOutcome>, [ReservationRef]>();
+  const scheduleReservation = jest.fn<Promise<ScheduleReservationOutcome>, [OrderJobData]>();
   const recordPurchaseAttempt = jest.fn<void, [string]>();
   reserve.mockResolvedValue('RESERVED');
   scheduleReservation.mockResolvedValue('QUEUED');
@@ -209,5 +211,34 @@ describe('CheckoutService.attemptPurchase', () => {
     await expect(service.attemptPurchase(USER_ID)).rejects.toBe(err);
     expect(recordPurchaseAttempt).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('propagates requestId into the scheduled job payload without polluting the ledger ref', async () => {
+    const { service, reserve, scheduleReservation } = buildService();
+
+    const result = await service.attemptPurchase(USER_ID, 'req-trace-99');
+
+    const { orderId } = reserve.mock.calls[0][0];
+    expect(reserve.mock.calls[0][0]).not.toHaveProperty('requestId');
+    expect(result).toEqual({ outcome: 'RESERVED', orderId, userId: USER_ID });
+    expect(scheduleReservation).toHaveBeenCalledWith({
+      saleId: ACTIVE_FLASH_SALE_ID,
+      userId: USER_ID,
+      orderId,
+      requestId: 'req-trace-99',
+    });
+  });
+
+  it('includes [req=...] in warn logs for unconfigured sale and infrastructure faults', async () => {
+    const { service, reserve } = buildService();
+    reserve.mockResolvedValueOnce('SALE_NOT_CONFIGURED');
+    await captureError(service.attemptPurchase(USER_ID, 'req-unconfigured'));
+
+    reserve.mockRejectedValueOnce(new Error('redis down'));
+    await captureError(service.attemptPurchase(USER_ID, 'req-failed'));
+
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(String(warn.mock.calls[0][0])).toContain('[req=req-unconfigured]');
+    expect(String(warn.mock.calls[1][0])).toContain('[req=req-failed]');
   });
 });

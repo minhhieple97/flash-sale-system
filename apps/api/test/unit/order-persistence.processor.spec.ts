@@ -1,11 +1,14 @@
 import { Logger } from '@nestjs/common';
-import { UnrecoverableError, type Worker } from 'bullmq';
+import { type Job, UnrecoverableError, type Worker } from 'bullmq';
 import {
   ORDER_COMPENSATION_JOB_NAME,
   ORDER_PERSISTENCE_JOB_NAME,
 } from '../../src/modules/orders/constants/orders.constants';
 import { OrderPersistenceRejectedError } from '../../src/modules/orders/errors/order-persistence-rejected.error';
-import type { PersistOrderResult } from '../../src/modules/orders/interfaces/order.interface';
+import type {
+  OrderJobData,
+  PersistOrderResult,
+} from '../../src/modules/orders/interfaces/order.interface';
 import { buildProcessor, jobOf, PROCESSOR_REF as REF } from '../support/order-processor.mocks';
 
 const RETRYABLE = new Error('connection terminated');
@@ -141,7 +144,7 @@ describe('OrderPersistenceProcessor', () => {
       expect(String(error.mock.calls[0][0])).toContain('redis down');
     });
 
-    it('logs at error that the maintenance sweep takes over when the final compensation attempt failed', async () => {
+    it('logs at error that the orphan sweeper takes over when the final compensation attempt failed', async () => {
       const { processor, scheduleCompensation } = buildProcessor();
       const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
 
@@ -153,7 +156,32 @@ describe('OrderPersistenceProcessor', () => {
       expect(scheduleCompensation).not.toHaveBeenCalled();
       expect(error).toHaveBeenCalledTimes(1);
       expect(String(error.mock.calls[0][0])).toContain(REF.orderId);
-      expect(String(error.mock.calls[0][0])).toContain('the ledger maintenance sweep retries it');
+      expect(String(error.mock.calls[0][0])).toContain(
+        'the orphan sweeper retries it after the pending grace window',
+      );
+    });
+
+    it('propagates requestId and includes [req=...] in exhausted processor error logs', async () => {
+      const { processor, scheduleCompensation } = buildProcessor();
+      scheduleCompensation.mockRejectedValue(new Error('redis down'));
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+      const correlatedData: OrderJobData = { ...REF, requestId: 'req-worker-9' };
+      const persistJob = {
+        ...jobOf({ attemptsMade: 5, attempts: 5 }),
+        data: correlatedData,
+      } as unknown as Job<OrderJobData>;
+      const compJob = {
+        ...jobOf({ name: ORDER_COMPENSATION_JOB_NAME, attemptsMade: 8, attempts: 8 }),
+        data: correlatedData,
+      } as unknown as Job<OrderJobData>;
+
+      await processor.onFailed(persistJob, RETRYABLE);
+      await processor.onFailed(compJob, RETRYABLE);
+
+      expect(scheduleCompensation).toHaveBeenCalledWith(correlatedData);
+      expect(error).toHaveBeenCalledTimes(2);
+      expect(String(error.mock.calls[0][0])).toContain('[req=req-worker-9]');
+      expect(String(error.mock.calls[1][0])).toContain('[req=req-worker-9]');
     });
 
     it('does nothing for a compensation job while attempts remain', async () => {

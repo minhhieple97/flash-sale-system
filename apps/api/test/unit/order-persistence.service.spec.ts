@@ -122,6 +122,23 @@ describe('OrderPersistenceService', () => {
 
       await expect(outcome).rejects.toThrow('release failed');
     });
+
+    it('preserves requestId in the queued job payload and tags enqueue-failure warnings', async () => {
+      const { service, queue, cache } = buildPersistenceService();
+      const jobData = { ...REF, requestId: 'req-sched-1' };
+      queue.add.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('redis down'));
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+
+      await service.scheduleReservation(jobData);
+      await service.scheduleReservation(jobData);
+
+      expect(queue.add).toHaveBeenNthCalledWith(1, ORDER_PERSISTENCE_JOB_NAME, jobData, {
+        ...ORDER_PERSISTENCE_JOB_OPTIONS,
+        jobId: REF.orderId,
+      });
+      expect(cache.releaseReservation).toHaveBeenCalledWith(REF);
+      expect(String(warn.mock.calls[0][0])).toContain('[req=req-sched-1]');
+    });
   });
 
   describe('persistReservedOrder', () => {
@@ -212,6 +229,23 @@ describe('OrderPersistenceService', () => {
 
       await expect(outcome).rejects.toThrow('db down');
       expect(cache.confirmReservation).not.toHaveBeenCalled();
+    });
+
+    it('includes [req=...] in adoption warn and error logs when jobData carries requestId', async () => {
+      const { service, cache } = buildPersistenceService();
+      const jobData = { ...REF, requestId: 'req-persist-7' };
+      cache.confirmReservation.mockResolvedValue('NOT_RESERVED');
+      cache.adoptCommittedOrder
+        .mockResolvedValueOnce('ADOPTED')
+        .mockResolvedValueOnce('NOT_ADOPTED');
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+
+      await service.persistReservedOrder(jobData);
+      await service.persistReservedOrder(jobData);
+
+      expect(String(warn.mock.calls[0][0])).toContain('[req=req-persist-7]');
+      expect(String(error.mock.calls[0][0])).toContain('[req=req-persist-7]');
     });
   });
 
