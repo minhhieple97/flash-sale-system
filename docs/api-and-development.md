@@ -6,12 +6,12 @@ Complete HTTP contract, local setup, configuration reference, testing pyramid, a
 
 ## 1. HTTP API Reference
 
-All endpoints live under `/api/v1` except `/health` and `/metrics`. Fastify enforces a `16 KiB` JSON body limit and emits `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: no-referrer` on every API response. nginx proxies `/api/` and exact `/health` on port `8080` (keeping `/metrics` internal on port `3000` and adding `Content-Security-Policy` on static SPA responses) so the browser uses relative URLs with no CORS needed.
+All endpoints live under `/api/v1` except `/health` and `/metrics`. Fastify enforces a `16 KiB` JSON body limit and emits `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: no-referrer` on every API response. Every response also echoes `X-Request-Id` (reusing an incoming `^[a-zA-Z0-9._:-]{1,64}$` value or generating a UUID), and checkout requests forward `requestId` into BullMQ persistence/compensation job payloads and worker logs. nginx proxies `/api/` and exact `/health` on port `8080` (keeping `/metrics` internal on port `3000` and adding `Content-Security-Policy` on static SPA responses) so the browser uses relative URLs with no CORS needed.
 
 | Method | Path | Purpose & Cache Policy |
 | --- | --- | --- |
 | `GET` | `/health` | `200` when PostgreSQL & Redis answer within `1 s`, else `503` |
-| `GET` | `/metrics` | Internal Prometheus text counters & BullMQ queue depth gauge (port `3000` only) |
+| `GET` | `/metrics` | Internal Prometheus text counters, HTTP latency histogram, BullMQ queue & PG pool gauges (port `3000` only) |
 | `GET` | `/api/v1/products/featured` | Featured product (`60 s` singleflight cache; `Cache-Control: public, max-age=60, stale-while-revalidate=300`) |
 | `GET` | `/api/v1/flash-sales/current` | Sale state (`UPCOMING`/`ACTIVE`/`SOLD_OUT`/`ENDED`), stock, window, `serverTime` (`Cache-Control: no-store`) |
 | `POST` | `/api/v1/checkout/purchase` | Reserve 1 unit (`202`) or typed refusal; optional `RateLimitGuard` |
@@ -43,7 +43,12 @@ All API errors return `{ "code": "<STABLE_CODE>", "message": "<human-readable de
 { "status": "ok", "checks": { "database": "up", "redis": "up" } }
 ```
 
-**`GET /metrics`** — Prometheus text (`text/plain; version=0.0.4`) exposing `flash_sale_purchase_attempts_total{outcome}`, `flash_sale_order_persistence_total{outcome}`, and `flash_sale_order_queue_jobs{state}`.
+**`GET /metrics`** — Prometheus text (`text/plain; version=0.0.4`) exposing:
+- `flash_sale_purchase_attempts_total{outcome}` (counter)
+- `flash_sale_order_persistence_total{outcome}` (counter)
+- `flash_sale_order_queue_jobs{state}` (gauge: `waiting`, `active`, `delayed`, `failed`)
+- `flash_sale_http_request_duration_seconds{method,route,status_class}` (histogram: buckets `0.005`..`5` s + `+Inf`, excluding `/metrics` scrapes)
+- `flash_sale_db_pool_connections{state}` (gauge: `total`, `idle`, `waiting`)
 
 **`GET /api/v1/products/featured`** — `200` (prices in integer cents):
 ```json
@@ -167,10 +172,12 @@ Each invariant is tested at the lowest layer that genuinely proves it: pure bran
 
 | Level | Command | Target / Scope | Coverage |
 | --- | --- | --- | --- |
-| **API Unit** | `pnpm --filter @flash-sale/api test:unit` | `apps/api/test/unit/` (pinned `ClockService`, Fastify HTTP/guard specs, `sale-ledger` boundary spec) | 52 files, 488 tests |
-| **API Integration & E2E** | `pnpm --filter @flash-sale/api test:integration` | `apps/api/test/integration/` (real PostgreSQL 16, Redis 7, BullMQ; `maxWorkers: 1`, `--detectOpenHandles`) | 32 files (28 integration + 4 E2E), 197 tests |
+| **API Unit** | `pnpm --filter @flash-sale/api test:unit` | `apps/api/test/unit/` (pinned `ClockService`, Fastify HTTP/guard specs, `sale-ledger` boundary spec) | 57 files, 539 tests |
+| **API Integration & E2E** | `pnpm --filter @flash-sale/api test:integration` | `apps/api/test/integration/` (real PostgreSQL 16, Redis 7, BullMQ; `maxWorkers: 1`, `--detectOpenHandles`) | 32 files (28 integration + 4 E2E), 199 tests |
 | **Web (Vitest + RTL)** | `pnpm --filter @flash-sale/web test` | `apps/web/src/**/__tests__/` (real hooks/components, fake timers, stubbed `fetch` only) | 21 files, 215 tests |
 | **Stress Math** | `pnpm test:scripts` | `scripts/stress-math.test.mjs` (`node --test`) | 1 file (10 suites), 19 tests |
+| **Browser E2E (Playwright)** | `pnpm test:e2e:browser` | `tests/e2e/browser-smoke.test.mjs` (headless Chromium against live Docker Compose stack on `:8080`) | 1 file, 6 tests |
+| **Total Automated Tests** | | Unit + Integration/E2E + Web + Stress Math + Browser E2E | **112 files, 978 tests** |
 | **Static Checks** | `pnpm lint && pnpm -r typecheck` | Biome (`--error-on-warnings`, `noExplicitAny`, `noConsole`, cognitive complexity <= 10) + TypeScript 6 `strict` | 0 warnings / 0 errors |
 | **Full Verification Gate** | `pnpm verify` | 9 gates: PG & Redis healthy → lint → script tests → typecheck → `api` stopped → Jest `--detectOpenHandles` → Vitest → workspace build | Automated + GitHub Actions CI |
 
@@ -179,7 +186,8 @@ Each invariant is tested at the lowest layer that genuinely proves it: pure bran
 - **Lua idempotency & CAS fences:** Every script in `SALE_LEDGER_SCRIPTS` resent without mutating state twice; released reservations never resurrect as `CONFIRMED`.
 - **Pipeline & self-healing:** Real BullMQ retries, PG-first compensation, `adoptOrder` (including mid-restore retry), stateless `ZSET` orphan sweeping (grace window + boot sweep), `FLUSHALL` 1,000-row chunked hydration under `maintenance_lock`, partial reset recovery, and clean `SIGTERM` shutdown order.
 - **Post-test ledger convergence:** `expectLedgerConverged` runs after pipeline integration tests to prove zero jobless `RESERVED` slots and `stock + HLEN(users) === totalStock`.
-- **Security & ops E2E (`ops-security.e2e-spec.ts`):** `ADMIN_API_KEY` (`401`/`415`/`200`), `RATE_LIMIT_ENABLED` (`429` + `retry-after`), and Prometheus `/metrics` output.
+- **Security & ops E2E (`ops-security.e2e-spec.ts`):** `ADMIN_API_KEY` (`401`/`415`/`200`), `RATE_LIMIT_ENABLED` (`429` + `retry-after`), `X-Request-Id` echo/sanitization, and Prometheus `/metrics` output (counters, HTTP latency histogram, BullMQ queue & PG pool gauges).
+- **Full-stack Browser E2E (`tests/e2e/browser-smoke.test.mjs`):** Real Chromium through nginx (`http://127.0.0.1:8080`) proving featured product rendering, purchase confirmation, normalized-email duplicate rejection, sell-out + disabled `Buy Now`, Order lookup, and Demo scenarios reset with zero page errors.
 
 ### Troubleshooting
 

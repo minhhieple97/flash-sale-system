@@ -34,7 +34,7 @@ flowchart LR
 | Component | Responsibility | State Owned | Failure Impact |
 | --- | --- | --- | --- |
 | **nginx (`web`)** | Serves React static build; proxies `/api/` and `=/health` (never `/metrics`) over `keepalive 256` (`keepalive_requests 10000`, HTTP/1.1) with 10 s DNS re-resolution; overwrites `X-Forwarded-For` / `X-Real-IP` with `$remote_addr`; emits CSP + security headers on static `location /` without duplicating API headers | None | Storefront unreachable; API still serves directly on `:3000` |
-| **API (HTTP)** | Input validation, optional per-IP `RateLimitGuard` (`TRUST_PROXY`), `ADMIN_API_KEY`, `Content-Type: application/json` (`415` on admin reset), atomic purchase gate, status/product/lookup routes, `/health`, `/metrics` | 60 s singleflight product cache (+ stale fallback with 5 s DB retry backoff), 200 ms `FOUND`-only status snapshot cache, optional in-memory rate-limit buckets, Prometheus counters | New purchases stop; existing Redis reservations & BullMQ jobs persist |
+| **API (HTTP)** | Input validation, `X-Request-Id` echo & BullMQ correlation, optional per-IP `RateLimitGuard` (`TRUST_PROXY`), SHA-256 constant-time `ADMIN_API_KEY`, `Content-Type: application/json` (`415` on admin reset), atomic purchase gate, status/product/lookup routes, `/health`, `/metrics` | 60 s singleflight product cache (+ stale fallback with 5 s DB retry backoff), 200 ms `FOUND`-only status snapshot cache, optional in-memory rate-limit buckets, Prometheus metrics (counters, HTTP latency histogram, BullMQ & PG pool gauges) | New purchases stop; existing Redis reservations & BullMQ jobs persist |
 | **BullMQ Worker** | Persists each `RESERVED` unit into PostgreSQL in one ACID transaction and confirms or adopts the Redis slot | None | Jobs accumulate in Redis; buyers still get `202` until stock hits `0` |
 | **Ledger Maintenance** | On boot (up to `50 × 100 ms` lease retry) and every 30 s (1-shot lease): restores missing Redis keys in 1,000-row batches from PostgreSQL, resumes paused queue under lease, and compensates expired orphan reservations via Redis `ZSET` | Stateless (`activeRun` promise for graceful shutdown only) | Self-healing pauses; steady-state requests are unaffected |
 | **Redis 7 (AOF)** | Fast decision engine, pending-reservation index, distributed maintenance lease, BullMQ broker | Sale config, stock counter, buyer hash, pending ZSET, maintenance lock, job queues | API fails fast (`503 TEMPORARY_FAILURE`) within ~2 s; AOF replays on restart |
@@ -93,7 +93,7 @@ erDiagram
         varchar sku UK
         varchar name
         int original_price_cents "CHECK > 0"
-        int sale_price_cents "CHECK > 0"
+        int sale_price_cents "CHECK > 0, <= original"
     }
     flash_sales {
         uuid id PK
@@ -108,7 +108,7 @@ erDiagram
         uuid flash_sale_id FK
         uuid product_id FK
         varchar user_id "UNIQUE (flash_sale_id, user_id)"
-        varchar status "default CONFIRMED"
+        varchar status "CHECK = CONFIRMED"
     }
 ```
 
@@ -131,7 +131,7 @@ sequenceDiagram
 
 1. **Normalization:** `userId` is trimmed, lowercased, and validated (`^[a-z0-9._@+-]{3,128}$`) so `"  ALICE@Example.com "` and `"alice@example.com"` map to the same buyer.
 2. **Typed Outcomes (No Hot-Path Throws):** `CheckoutService` returns a discriminated union mapped via `Record<PurchaseOutcome, HttpStatus>` — expected refusals (`SOLD_OUT`, `ALREADY_PURCHASED`, `SALE_UPCOMING`, `SALE_ENDED`) never allocate V8 stack traces.
-3. **Enqueue Safety:** If `queue.add` fails, `OrderPersistenceProducer` inspects Redis by `jobId = orderId`. If the job was actually stored (lost reply), the `202` stands; otherwise it runs `rollbackPurchase` and answers `503`.
+3. **Request Correlation & Enqueue Safety:** Every HTTP response echoes a validated `X-Request-Id` (generating a UUID if missing/invalid), and checkout attaches `requestId` to the BullMQ job so persistence and compensation worker logs correlate back to the originating request. If `queue.add` fails, `OrderPersistenceProducer` inspects Redis by `jobId = orderId`: if stored (lost reply), the `202` stands; otherwise it runs `rollbackPurchase` and answers `503`.
 4. **Worker Persistence:** `OrdersRepository.persistOrder` checks if the reservation is live, inserts the order (`ON CONFLICT DO NOTHING`) and decrements `remaining_stock` (`WHERE remaining_stock > 0`) in one transaction, then calls `confirmPurchase` (or `adoptOrder` if Redis lost the slot after PG committed).
 5. **Client Confirmation:** The React storefront computes clock offset from `serverTime`, schedules one boundary `setTimeout` at `startsAt`/`endsAt` (zero idle re-renders), and polls `/orders/user/:userId` every 1 s (up to 30 attempts) keyed by `[userId, orderId]`.
 
@@ -218,7 +218,7 @@ flowchart TD
     orders["OrdersModule<br/>queue, worker, ZSET sweeper, lookup"]
     products["ProductsModule<br/>featured product cache"]
     health[HealthModule]
-    metrics["MetricsModule<br/>/metrics counters & queue gauge"]
+    metrics["MetricsModule<br/>/metrics counters, histogram & gauges"]
     ledger["SaleLedgerModule<br/>sole owner of flash_sale:*"]
     infra["Infrastructure<br/>RedisModule, QueueModule, DatabaseModule"]
 
