@@ -14,7 +14,7 @@ function checkOrder(): HTMLElement {
 }
 
 function userIdInput(): HTMLInputElement {
-  return screen.getByLabelText('User ID') as HTMLInputElement;
+  return screen.getByLabelText('User ID (username or email)') as HTMLInputElement;
 }
 
 describe('OrderLookupCard layout', () => {

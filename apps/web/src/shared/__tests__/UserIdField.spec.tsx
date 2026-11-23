@@ -5,10 +5,16 @@ import { UserIdField } from '../components/UserIdField';
 import { USER_ID_FORMAT_HINT } from '../utils/user-id-validation.util';
 
 function inputElement(): HTMLInputElement {
-  return screen.getByLabelText('User ID') as HTMLInputElement;
+  return screen.getByLabelText('User ID (username or email)') as HTMLInputElement;
 }
 
 describe('UserIdField', () => {
+  it('renders an example placeholder showing username or email formats', () => {
+    render(<UserIdField value="" disabled={false} onChange={vi.fn()} />);
+
+    expect(inputElement()).toHaveAttribute('placeholder', 'e.g. alice@example.com or john_doe');
+  });
+
   it('renders the format hint linked via aria-describedby without aria-invalid when empty', () => {
     render(<UserIdField value="" disabled={false} onChange={vi.fn()} />);
 

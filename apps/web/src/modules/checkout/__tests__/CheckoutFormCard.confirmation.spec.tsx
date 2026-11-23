@@ -30,7 +30,9 @@ function orderRequests(fetchStub: ReturnType<typeof stubFetch>): number {
 }
 
 async function buyAs(userId: string): Promise<void> {
-  fireEvent.change(screen.getByLabelText('User ID'), { target: { value: userId } });
+  fireEvent.change(screen.getByLabelText('User ID (username or email)'), {
+    target: { value: userId },
+  });
   fireEvent.click(screen.getByRole('button', { name: 'Buy Now' }));
   await advance(0);
 }

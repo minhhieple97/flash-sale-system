@@ -76,7 +76,7 @@ describe('App', () => {
     render(<App />);
     await screen.findByText('Live now');
     const checkout = screen.getByRole('region', { name: 'Checkout' });
-    await user.type(within(checkout).getByLabelText('User ID'), 'alice');
+    await user.type(within(checkout).getByLabelText('User ID (username or email)'), 'alice');
     await user.click(screen.getByRole('button', { name: 'Buy Now' }));
     await screen.findByText('Reserved! Confirming your order...');
 
@@ -97,7 +97,7 @@ describe('App', () => {
     render(<App />);
     await screen.findByText('Live now');
     const lookup = screen.getByRole('region', { name: 'Order lookup' });
-    await user.type(within(lookup).getByLabelText('User ID'), 'alice');
+    await user.type(within(lookup).getByLabelText('User ID (username or email)'), 'alice');
     await user.click(within(lookup).getByRole('button', { name: 'Check order' }));
     await within(lookup).findByText('Reserved, awaiting confirmation');
 
@@ -125,7 +125,7 @@ describe('App', () => {
     expect(await screen.findByText('100 of 100 left')).toBeInTheDocument();
 
     const checkout = screen.getByRole('region', { name: 'Checkout' });
-    await user.type(within(checkout).getByLabelText('User ID'), 'alice');
+    await user.type(within(checkout).getByLabelText('User ID (username or email)'), 'alice');
     await user.click(within(checkout).getByRole('button', { name: 'Buy Now' }));
 
     expect(await screen.findByText('99 of 100 left')).toBeInTheDocument();

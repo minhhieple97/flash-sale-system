@@ -25,7 +25,7 @@ function buyNow(): HTMLElement {
 }
 
 function userIdInput(): HTMLInputElement {
-  return screen.getByLabelText('User ID') as HTMLInputElement;
+  return screen.getByLabelText('User ID (username or email)') as HTMLInputElement;
 }
 
 async function buyActive(userId = 'alice'): Promise<ReturnType<typeof userEvent.setup>> {

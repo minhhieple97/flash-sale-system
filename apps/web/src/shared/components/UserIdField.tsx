@@ -20,7 +20,7 @@ export function UserIdField({ value, onChange, disabled }: UserIdFieldProps): Re
   return (
     <div>
       <label htmlFor={inputId} className="mb-1 block text-sm font-medium text-slate-700">
-        User ID
+        User ID (username or email)
       </label>
       <input
         id={inputId}
@@ -30,6 +30,7 @@ export function UserIdField({ value, onChange, disabled }: UserIdFieldProps): Re
         aria-invalid={isInvalid ? true : undefined}
         onChange={(event) => onChange(event.target.value)}
         autoComplete="off"
+        placeholder="e.g. alice@example.com or john_doe"
         className={`${BASE_INPUT_CLASSES} ${isInvalid ? INVALID_INPUT_CLASSES : NORMAL_INPUT_CLASSES}`}
       />
       <p
