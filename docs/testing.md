@@ -8,14 +8,14 @@ The strategy is to put each guarantee under the cheapest test that can really pr
 
 | Level | Where | Runs against | Files | Tests |
 | --- | --- | --- | --- | --- |
-| API unit | `apps/api/test/unit/` | Isolated unit specs (pinned clock; plus in-process Fastify HTTP and boundary specs) | 54 | 473 |
+| API unit | `apps/api/test/unit/` | Isolated unit specs (pinned clock; plus in-process Fastify HTTP and boundary specs) | 56 | 517 |
 | API integration | `apps/api/test/integration/*.spec.ts` | Real PostgreSQL 16, Redis 7 and BullMQ | 28 | — |
-| API end to end | `apps/api/test/integration/*.e2e-spec.ts` | The whole app over HTTP, real stores | 3 | — |
-| Web | `apps/web/src/**/__tests__/` | Vitest and React Testing Library, only `fetch` stubbed | 21 | 196 |
-| Script tests | `scripts/*.test.mjs` | `node --test` against fixture sources and the stress math | 5 | 66 |
+| API end to end | `apps/api/test/integration/*.e2e-spec.ts` | The whole app over HTTP, real stores | 4 | 199 (with integration) |
+| Web | `apps/web/src/**/__tests__/` | Vitest and React Testing Library, only `fetch` stubbed | 21 | 214 |
+| Script tests | `scripts/*.test.mjs` | `node --test` against fixture sources and the stress math | 5 (23 suites) | 68 |
 | Stress | `tests/stress/` | The running Docker stack | 5 scenarios | |
 
-The unit (473), web (196), and script (66) counts above passed on the current branch; the 31 API integration and end-to-end suites run in CI (`.github/workflows/ci.yml`) and `pnpm verify` (with the Compose `api` container stopped) under `--detectOpenHandles` with no open handle allowed. Run the commands in [development.md](development.md#commands) for live counts.
+All 998 automated tests across API unit (517), API integration and end-to-end (199 across 32 suites), Web Vitest (214 across 21 files), and scripts (68 across 23 `node:test` suites in 5 files) pass on the current branch; `pnpm verify` and CI (`.github/workflows/ci.yml`) run all 32 API integration and end-to-end suites (with Compose `api` and `worker` stopped) under `--detectOpenHandles` with zero open handles allowed. Run the commands in [development.md](development.md#commands) for live counts.
 
 ## What each level proves
 
@@ -50,11 +50,11 @@ After each pipeline test, `expectLedgerConverged` runs `sweepOrphans(saleId, 'IN
 
 ### End to end
 
-The three `*.e2e-spec.ts` suites boot the whole application over HTTP against real stores. `flash-sale-race.e2e-spec.ts` fires 100 buyers at 10 units and expects 10 × 202 and 90 × 410, 10 orders and `remaining_stock` 0, then fires 50 requests from one buyer in case and whitespace variants and expects 1 × 202 and 49 × 409. `flash-sale-flow.e2e-spec.ts` walks the whole life of a sale, and `app.e2e-spec.ts` checks the HTTP surface.
+The four `*.e2e-spec.ts` suites boot the whole application over HTTP against real stores. `flash-sale-race.e2e-spec.ts` fires 100 buyers at 10 units and expects 10 × 202 and 90 × 410, 10 orders and `remaining_stock` 0, then fires 50 requests from one buyer in case and whitespace variants and expects 1 × 202 and 49 × 409. `flash-sale-flow.e2e-spec.ts` walks the whole life of a sale, `app.e2e-spec.ts` checks the HTTP surface (including `415 UNSUPPORTED_MEDIA_TYPE` on non-JSON admin reset), and `ops-security.e2e-spec.ts` verifies `ADMIN_API_KEY` (`401`/`415`/`200`), `RATE_LIMIT_ENABLED` (`429 RATE_LIMITED` + `retry-after`), `GET /metrics` Prometheus output, and `AppModule.forRole('worker')` route isolation (`200` on `/health` + `/metrics`, `404` on storefront/checkout).
 
 ### Web
 
-The web specs run the real HTTP client, hooks and components, and stub only `fetch`. Vitest's fake timers move the polling and the countdown, so no spec sleeps. They cover the server-corrected clock offset, the effective sale state at the opening second, the polling lifecycle (no overlap, abort on unmount), the Buy Now lock rules, every outcome banner, the confirmation poller's four phases, and the demo toolbar.
+The web specs run the real HTTP client, hooks and components, and stub only `fetch`. Vitest's fake timers move the polling and the countdown, so no spec sleeps. They cover the server-corrected clock offset, the effective sale state at boundary transitions (single boundary-scheduled `setTimeout`, zero idle polling re-renders), the polling lifecycle (1,000 ms × 30 attempts, keyed by `[userId, orderId]` so same-user retries after release/timeout confirm cleanly, abort on unmount), `INVALID_RESPONSE` handling for non-JSON `2xx`, `RATE_LIMITED` feedback, the Buy Now lock rules, every outcome banner, and the demo toolbar (including `401` `AdminKeyField` prompt).
 
 ### Not covered
 
@@ -102,12 +102,12 @@ Specs guard the rest of the design rules: `sale-ledger.boundary.spec.ts` fails w
 3. `pnpm lint`.
 4. `pnpm test:scripts`.
 5. `pnpm -r typecheck`.
-6. The compose `api` container is stopped.
+6. Both compose `api` and `worker` containers (`docker-compose.yml` + `docker-compose.scaled.yml`) are stopped.
 7. Every API Jest suite under `--detectOpenHandles`, without `--forceExit`, inside a 300 s timeout. Any open handle fails the step.
 8. The web Vitest suite.
 9. `pnpm -r build`.
 
-Step 6 exists because the integration suites share the compose PostgreSQL, Redis and queue name. A running `api` container's worker takes the suites' jobs and fails them. Step 7 forbids `--forceExit`, so a leaked connection fails the gate and does not hide behind a forced exit. GitHub Actions ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the same `quality-and-unit` checks plus `api-integration` against PostgreSQL 16 and Redis 7 on pushes to `main` and pull requests.
+Step 6 exists because the integration suites share the compose PostgreSQL, Redis and queue name. A running `api` or `worker` container takes the suites' jobs and fails them. Step 7 forbids `--forceExit`, so a leaked connection fails the gate and does not hide behind a forced exit. GitHub Actions ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml), `permissions: contents: read`, `timeout-minutes: 10`) runs `quality-and-unit` (plus `docker compose config -q` on base and scaled configs) and `api-integration` (failing on any `--detectOpenHandles` open-handle warning) against PostgreSQL 16 and Redis 7 on pushes to `main` and pull requests.
 
 ## Test conventions
 
@@ -125,8 +125,8 @@ The stress suite runs against the real stack and checks the stores afterwards, s
 | --- | --- |
 | `oversell` | 5,000 buyers on 100 units sell exactly 100 units |
 | `same-user-race` | 300 requests from one buyer, in four spellings, yield one 202 |
-| `mixed` | Repeats and losers over 6,000 requests yield the exact 202, 409 and 410 counts |
+| `mixed` | Repeats and losers over 6,000 requests (blocks of 60 racing 3 attempts per user concurrently during stock depletion) yield 100 × 202, 200 × 409, and 5,700 × 410 |
 | `pg-blip` | Every 202 still ends `CONFIRMED` after PostgreSQL is stopped for 45 s |
-| `realistic-mix` (opt-in) | Mixed read+write burst through nginx in k6 (`250` buyers + `50` readers + `30` non-buyer lookups) checks 100/4900 split, 0 read/lookup failures, and latency thresholds (`node tests/stress/node-stress-runner.mjs realistic-mix` runs only the 5,000-buyer burst) |
+| `realistic-mix` (opt-in) | Mixed read+write burst through nginx in k6 (`250` buyers × `16,000` requests overlapping full 8 s window + `50` readers + `30` lookups split 50/50 between real buyers and non-buyers) checks 100/15,900 split, 0 read/lookup failures, and latency thresholds (`node tests/stress/node-stress-runner.mjs realistic-mix` runs only the buyer burst) |
 
 Both the Node runner and k6 scripts support optional `ADMIN_API_KEY` (sent as `x-admin-key` on reset calls). After each scenario the Node runner polls until every 202 is `CONFIRMED`, then reads PostgreSQL and Redis and checks that the order ids equal the 202 ids, `remaining_stock` equals `total_stock` minus the orders, Redis stock equals the stock minus the reservations, and the Redis buyer hash holds one `CONFIRMED` entry per reservation. The checks can fail: a stray order row inserted mid-run turned the `mixed` scenario red with three `FAIL` lines.

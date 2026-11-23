@@ -57,47 +57,49 @@ The direction repeats the 20,000-request result. Throughput is 1.40 times `befor
 
 ### The repository's stress suite on `current`
 
-One run each, after a swap, a warm-up and the quiet gate, on the same stack.
+Measured on 2026-11-23 after updating `SCENARIOS.mixed` so duplicate requests per user race concurrently inside the opening 250-request wave while stock is still live:
 
-| Command | Result |
+| Command / Stack | Result |
 | --- | --- |
-| `pnpm stress:node` | `STRESS OK`, 53 `PASS` lines across `oversell`, `same-user-race`, `mixed` and `pg-blip` |
-| Node `oversell`, 5,000 requests | 3,301 req/s (mid-run 3,651), p50, p95, p99 of 65, 147 and 208 ms, 100 × 202, 4,900 × 410 |
-| Node `same-user-race`, 300 requests | 2,827 req/s, 30, 62 and 64 ms, 1 × 202, 299 × 409 |
-| Node `mixed`, 6,000 requests | 3,755 req/s, 64, 97 and 109 ms, 100 × 202, 200 × 409, 5,700 × 410 |
+| `pnpm stress:node` (single-node, `http://localhost:3000`) | `STRESS OK`, 53 `PASS` lines across `oversell`, `same-user-race`, `mixed` and `pg-blip` |
+| Node `oversell`, 5,000 requests (single-node) | 2,160.0 req/s (mid-run 2,399.7), p50/p95/p99 of 99.2, 195.1 and 339.4 ms, 100 × 202, 4,900 × 410 |
+| Node `same-user-race`, 300 requests (single-node) | 2,010.2 req/s (mid-run 2,354.5), 45.7, 61.1 and 65.5 ms, 1 × 202, 299 × 409 |
+| Node `mixed`, 6,000 requests (single-node) | 2,167.3 req/s (mid-run 2,091.1), 103.4, 178.8 and 207.8 ms, 100 × 202, 200 × 409, 5,700 × 410 |
 | Node `pg-blip` (PostgreSQL stopped 45 s) | 3 × 202 all confirmed within 90 s, 97 × 410, conservation `PASS` |
-| `pnpm stress:k6:oversell` | Barrier 250 of 250 VUs, mid-run 3,533 req/s, 253 requests in flight on average, p95 and p99 of 110 and 132 ms, 202 p99 88.6 ms, 5xx 0, 100 × 202, 4,900 × 410, every threshold passed |
-| `pnpm stress:k6:same-user` | Mid-run 2,134 req/s, p95 and p99 of 85 and 93 ms, 1 × 202, 299 × 409, 5xx 0 |
+| `BASE_URL=http://localhost:8080 pnpm stress:node oversell mixed same-user-race` (`--scale api=2` + `worker`) | `STRESS OK`, all response, PostgreSQL, Redis and conservation checks `PASS`; `oversell` 950.1 req/s (p50/p95/p99 195.4/430.4/2,530.2 ms); `mixed` 991.1 req/s (189.7/571.6/1,204.3 ms); `same-user-race` 1,275.2 req/s (68.7/127.1/133.0 ms) |
+| `pnpm stress:k6:oversell` (2026-11-22 quiet-gated baseline) | Barrier 250 of 250 VUs, mid-run 3,533 req/s, 253 requests in flight on average, p95 and p99 of 110 and 132 ms, 202 p99 88.6 ms, 5xx 0, 100 × 202, 4,900 × 410, every threshold passed |
+| `pnpm stress:k6:same-user` (2026-11-22 quiet-gated baseline) | Mid-run 2,134 req/s, p95 and p99 of 85 and 93 ms, 1 × 202, 299 × 409, 5xx 0 |
 
 The k6 oversell script holds every virtual user at a barrier, so 250 purchases are in flight together, and it reports throughput without the warm-up. Its latencies come at about twice the concurrency of the driver used for the tables above, so compare them only with other runs of the same script. Each oversell virtual user opens its connection with an untimed `GET /health`, and the Node runner opens its keep-alive sockets the same way. The budgets then measure purchases and not connection setup. The Node runner checks PostgreSQL order ids, `remaining_stock`, Redis stock and conservation after every scenario, and all passed.
 
 ### Mixed read + write through nginx (`realistic-mix.k6.js`)
 
-Measured on 2026-11-22 against the current Compose stack (`api` with `APP_ROLE=all`, `web` nginx with `keepalive 256` and `keepalive_requests 10000`, `postgres`, `redis`) through `http://web:80` on the same 4-vCPU WSL2 host (AMD Ryzen 5 5500U, Docker Desktop). `realistic-mix.k6.js` runs three overlapping scenarios (330 VUs total), all warming keep-alive sockets via `GET /health` behind the 5 s `t=0..5s` barrier before starting the burst together at `t=5s`:
+Measured on 2026-11-23 through `http://web:80` (nginx with `keepalive 256` and `keepalive_requests 10000`) on the 4-vCPU (2 physical cores SMT) WSL2 host (AMD Ryzen 5 5500U, Docker Desktop). `realistic-mix.k6.js` runs three overlapping scenarios (330 VUs total), all warming keep-alive sockets via `GET /health` behind the 5 s `t=0..5s` barrier before starting the burst together at `t=5s`:
 
-- `buyers`: 250 VUs, 5,000 `POST /api/v1/checkout/purchase` iterations on 100 units.
+- `buyers`: 250 VUs, 16,000 `POST /api/v1/checkout/purchase` iterations on 100 units (sized so buyer write saturation spans the entire 8 s read/lookup window; the earlier 2026-11-22 5,000-request setup finished buyers in ~3.3 s and left 59% of the 8 s window idle).
 - `storefront_readers`: 50 constant VUs (`13s` total = 5 s warmup + 8 s active window), alternating `GET /api/v1/products/featured` (60 s singleflight cache) and `GET /api/v1/flash-sales/current` (200 ms singleflight cache).
-- `order_lookups`: 30 constant VUs (`13s` total = 5 s warmup + 8 s active window), polling `GET /api/v1/orders/user/non-buyer-...` (answered `NONE` directly from Redis when the ledger is intact).
+- `order_lookups`: 30 constant VUs (`13s` total = 5 s warmup + 8 s active window), alternating 50% real buyer IDs (`stress-buyer-0..99`, expecting `200` and `NONE`/`RESERVED`/`CONFIRMED`) and 50% `non-buyer-...` (expecting `200` and `NONE`).
 
-Median and `[min to max]` across 6 steady warmed runs (runs 2–6 and 8, host 1-minute load average 3.48 to 4.44):
+Single-node warmed run (`APP_ROLE=all`, host 1-minute load average 4.07) and scaled runs (`docker-compose.scaled.yml` with `--scale api=2` + dedicated `worker`, 2 runs at load average 6.42 and 3.32):
 
-| Scenario / Metric | Median [range] (n = 6 steady) | Threshold | Outcome |
-| --- | --- | --- | --- |
-| Buyers barrier VUs | 250/250 | `>= 238` | 6/6 pass |
-| Buyers mid-run throughput | 1,518.0 req/s [1,431.8 to 1,707.5] | — | — |
-| Buyers outcomes (`202` / `409` / `410` / `5xx`) | 100 / 0 / 4,900 / 0 | `100` / `0` / `4900` / `0` | 6/6 pass |
-| Purchase latency p50 | 144.7 ms [137.1 to 161.4] | — | — |
-| Purchase latency p95 | 236.6 ms [209.6 to 273.1] | `< 300 ms` | 6/6 pass |
-| Purchase latency p99 | 289.2 ms [250.5 to 357.5] | `< 600 ms` | 6/6 pass |
-| Storefront reads (8 s window) | 10,093 reqs, 1,261.6 req/s [1,179.6 to 1,371.8] | `count > 0`, `read_failures == 0` | 6/6 pass |
-| Read latency p50 / p95 / p99 | 30.4 / 83.9 / 135.1 ms (p99 [126.3 to 165.4]) | `p(99) < 250 ms` | 6/6 pass |
-| Order lookups (8 s window) | 3,918 reqs, 489.7 req/s [445.1 to 510.1] | `count > 0`, `status == 'NONE'` | 6/6 pass |
-| Lookup latency p50 / p95 / p99 | 49.6 / 124.8 / 187.9 ms (p99 [164.7 to 244.4]) | `p(99) < 250 ms` | 6/6 pass |
-| `http_req_failed` | 0.00% | — | 6/6 pass |
+| Scenario / Metric | Single-node (`APP_ROLE=all`) | Scaled (`--scale api=2` + `worker`, run 1 / run 2) | Threshold (single-node) | Outcome (single-node) |
+| --- | --- | --- | --- | --- |
+| Buyers barrier VUs | 250/250 | 250/250 / 250/250 | `>= 238` | PASS |
+| Buyers mid-run window (middle 80%) | 9.01 s | 12.18 s / 15.56 s | Overlaps full 8 s window | PASS |
+| Buyers mid-run throughput | 1,420.1 req/s | 1,050.6 / 822.3 req/s | — | — |
+| Buyers outcomes (`202` / `409` / `410` / `5xx`) | 100 / 0 / 15,900 / 0 | 100 / 0 / 15,900 / 0 | `100` / `0` / `15900` / `0` | PASS |
+| Purchase latency p50 | 166.1 ms | 141.3 / 158.7 ms | — | — |
+| Purchase latency p95 | 278.0 ms | 416.9 / 670.3 ms | `< 400 ms` | PASS |
+| Purchase latency p99 | 335.8 ms | 551.6 / 1,135.2 ms | `< 650 ms` | PASS |
+| Storefront reads (8 s window) | 4,367 reqs (545.9/s) | 2,114 (264.3/s) / 1,091 (136.4/s) | `count > 0`, `read_failures == 0` | PASS |
+| Read latency p50 / p95 / p99 | 76.6 / 151.9 / 234.0 ms | 133.0 / 349.0 / 452.2 ms (run 2: 198.8 / 891.2 / 1,811.2 ms) | `p(99) < 450 ms` | PASS |
+| Order lookups (8 s window) | 1,708 reqs (213.5/s) | 1,024 (128.0/s) / 589 (73.6/s) | `count > 0`, 50% real + 50% non-buyer | PASS |
+| Lookup latency p50 / p95 / p99 | 129.1 / 211.5 / 286.6 ms | 168.9 / 394.9 / 498.2 ms (run 2: 222.8 / 933.5 / 1,943.9 ms) | `p(99) < 600 ms` | PASS |
+| `http_req_failed` | 0.00% | 0.00% / 0.00% | — | PASS |
 
-All 8 post-fix runs (including the first cold-nginx run immediately after recreating `web` at load 2.82 and run 7 during a 5.07 host load-average spike) had 0 `5xx`, 0 read/lookup failures, `0.00%` failed requests, `8/8` pass on `purchase p(99) < 600` (`250.5` to `484.0 ms`), and `8/8` pass on `read p(99) < 250` (`126.3` to `230.5 ms`); `purchase p95` (`420.4`, `316.3 ms`) and `lookup p99` (`325.9`, `277.7 ms`) crossed only on the cold-nginx run 1 and the `loadavg 5.07` run 7. PostgreSQL and Redis invariants checked via `psql` and `redis-cli` confirmed `100` orders, `remaining_stock = 0`, Redis stock `0`, and `100` entries in `:users`.
+Post-run PostgreSQL and Redis checks confirmed `total_stock = 100`, `remaining_stock = 0`, `100` distinct orders in PostgreSQL, Redis stock `0`, and `100` entries in `:users`. Under continuous 330-VU zero-think-time saturation (`250 buyers + 50 readers + 30 lookups`) across the full 8 s window on a single 4-vCPU host, two earlier pre-warm/contended 16,000-request single-node runs also recorded `purchase p95` of `310.8–323.9 ms`, `read p99` of `257.3–383.3 ms`, and `lookup p99` of `319.5–544.3 ms` with `0` errors (`5xx: 0`, `read_failures: 0`), motivating the updated full-overlap budgets above (`400 / 650 / 450 / 600 ms`). On `--scale api=2` + `worker` on the same 2-physical-core laptop, splitting traffic across 2 Node API containers + 1 worker + 4 nginx workers + k6 + Redis + PostgreSQL overcommits the 2 physical cores (which already carry ~1.2–1.4 idle-host busy cores), reducing aggregate throughput and widening tail latency relative to single-node while preserving `0%` request failures and strict store invariants; horizontal scaling benefits require dedicated CPU cores per API replica.
 
-**Root-cause finding (before vs after fix):** On the initial `keepalive 64` config (with default `keepalive_requests 1000`) and cold `startTime: '4s'` readers/lookups, 4/6 baseline runs and a repeated validation run hit `1.6–3.4 s` tail spikes (`purchase p99` `693.9–1,026.3 ms`; `lookup p99` up to `255.9 ms`). Because 80 active reader/lookup VUs exceeded the 64-connection idle pool right before 250 buyers woke simultaneously at `t=5s`, nginx opened ~200+ new upstream TCP connections into Node's one-accept-per-event-loop-iteration queue. Raising `keepalive 256` (`keepalive_requests 10000`) in `apps/web/nginx.conf` and warming all 330 VUs during `0–5 s` eliminated those accept-queue tail spikes (`purchase p99` dropped to `250.5–357.5 ms` and `max` fell from `1.6–3.4 s` to `389.8–768.0 ms` in steady runs).
+**Root-cause finding (nginx keepalive fix, 2026-11-22):** On the initial `keepalive 64` config (with default `keepalive_requests 1000`) and cold `startTime: '4s'` readers/lookups, baseline runs hit `1.6–3.4 s` tail spikes (`purchase p99` `693.9–1,026.3 ms`) because 80 active reader/lookup VUs exceeded the 64-connection idle pool right before 250 buyers woke at `t=5s`. Raising `keepalive 256` (`keepalive_requests 10000`) in `apps/web/nginx.conf` and warming all 330 VUs during `0–5 s` eliminated those accept-queue spikes.
 
 ## What limits the number
 

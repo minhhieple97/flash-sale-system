@@ -28,7 +28,7 @@ sequenceDiagram
     W->>R: HGET users userId (still this orderId?)
     W->>P: BEGIN, INSERT order, UPDATE stock WHERE remaining_stock above 0, COMMIT
     W->>R: confirmPurchase (RESERVED to CONFIRMED)
-    loop every 400 ms, at most 75 times
+    loop every 1,000 ms, at most 30 times
         B->>N: GET /api/v1/orders/user/:userId
         N->>A: proxy on pooled connection
         A->>R: MULTI (HGET users, EXISTS config stock)
@@ -135,7 +135,7 @@ The insert takes `product_id` from the sale row, so the job carries only the res
 ```mermaid
 flowchart TD
     c["confirmPurchase<br/>CONFIRMED:storedId, only while the entry is RESERVED:orderId"] -- CONFIRMED --> done(["entry is CONFIRMED"])
-    c -- NOT_RESERVED --> a["adoptOrder<br/>entry absent and stock above 0:<br/>write CONFIRMED, take one unit"]
+    c -- NOT_RESERVED --> a["adoptOrder<br/>entry absent and stock key exists (even <= 0):<br/>write CONFIRMED, DECR stock"]
     a -- ADOPTED --> warn(["entry is CONFIRMED, warning logged:<br/>committed after its entry was lost"])
     a -- NOT_ADOPTED --> intact{"ledger intact?<br/>(config & stock exist)"}
     intact -- no --> retry(["throw retryable error:<br/>ledger rebuilding; BullMQ retries"])
@@ -173,11 +173,11 @@ stateDiagram-v2
     SOLD_OUT --> ENDED: now passes endsAt
 ```
 
-The checks run in the order `UPCOMING`, `ENDED`, `SOLD_OUT`, `ACTIVE`. The Redis `SnapshotRead` promise is micro-cached for 200 ms with singleflight coalescing, while `serverTime` and `saleState` are computed fresh per request from `ClockService` (so window transitions flip immediately). Only rejected Redis calls clear the cache entry; resolved `NOT_CONFIGURED` (`404 FLASH_SALE_NOT_FOUND`) and `STOCK_MISSING` (`503 TEMPORARY_FAILURE`) reads stay cached for up to 200 ms unless invalidated by reset or maintenance.
+The checks run in the order `UPCOMING`, `ENDED`, `SOLD_OUT`, `ACTIVE`. Only `FOUND` Redis `SnapshotRead` promises (with `remainingStock` clamped `>= 0`) are micro-cached for 200 ms with singleflight coalescing, while `serverTime` and `saleState` are computed fresh per request from `ClockService` (so window transitions flip immediately). Non-`FOUND` reads are never cached: when Redis holds no config (`NOT_CONFIGURED`), `FlashSalesService` checks PostgreSQL and answers `503 TEMPORARY_FAILURE` if PostgreSQL holds a campaign (or is unavailable), returning `404 FLASH_SALE_NOT_FOUND` only when neither store has one; missing stock with config present answers `503 TEMPORARY_FAILURE`.
 
 ### Order lookup
 
-`GET /api/v1/orders/user/:userId` reads the user's slot and whether the ledger keys (`:config` and `:stock`) exist in one Redis `MULTI` (`readSlotWithLedgerState`). While the ledger is intact, a missing slot returns `NONE` directly from Redis without hitting PostgreSQL (cache-penetration guard); only when ledger keys are missing does lookup fall back to PostgreSQL.
+`GET /api/v1/orders/user/:userId` emits `Cache-Control: no-store` and reads the user's slot and whether the ledger keys (`:config` and `:stock`) exist in one Redis `MULTI` (`readSlotWithLedgerState`). While the ledger is intact, a missing slot returns `NONE` directly from Redis without hitting PostgreSQL (cache-penetration guard); only when ledger keys are missing does lookup fall back to PostgreSQL.
 
 ```mermaid
 flowchart TD
@@ -195,7 +195,7 @@ flowchart TD
 
 ## In the browser
 
-`UserIdField` validates format inline (`3–128 characters: a–z, 0–9, . _ @ + -`), and "Buy Now" is locked while the sale is not `ACTIVE` on the server-corrected clock, while a request is in flight, and while the user id is blank. After a 202 (and again on confirmation or release), the checkout card triggers an immediate sale status refresh and polls the order.
+`UserIdField` validates format inline (`3–128 characters: a–z, 0–9, . _ @ + -`), and "Buy Now" is locked while the sale is not `ACTIVE` on the server-corrected clock (via `useEffectiveSaleState`'s boundary-scheduled `setTimeout`), while a request is in flight, and while the user id is blank. After a 202 (and again on confirmation or release), the checkout card triggers an immediate sale status refresh and starts a fresh `[userId, orderId]`-keyed polling session (`useOrderConfirmationPoller`, 1,000 ms × 30 attempts).
 
 ```mermaid
 stateDiagram-v2
@@ -204,7 +204,7 @@ stateDiagram-v2
     polling --> polling: RESERVED, or a failed poll
     polling --> confirmed: CONFIRMED with an orderId
     polling --> released: NONE, the reservation was rolled back
-    polling --> timedOut: 75 polls without an answer, about 30 s
+    polling --> timedOut: 30 polls without an answer, about 30 s
     confirmed --> [*]
     released --> [*]
     timedOut --> [*]
@@ -213,14 +213,15 @@ stateDiagram-v2
 | Answer | Banner title | Tone |
 | --- | --- | --- |
 | 202 `RESERVED` | Reserved! Confirming your order... | info |
-| then `CONFIRMED` | Order confirmed, with a receipt | success |
+| then `CONFIRMED` | Order confirmed | success |
 | then `NONE` | Reservation released | warning |
-| after 75 polls | Still confirming, with a pointer to the lookup card | info |
+| after 30 polls | Still confirming | info |
 | 409 `ALREADY_PURCHASED` | Already purchased | warning |
 | 410 `SOLD_OUT` | Sold out | danger |
 | 422 `SALE_UPCOMING` | Sale has not started | info |
 | 422 `SALE_ENDED` | Sale has ended | neutral |
 | 400 `INVALID_USER_ID` | Invalid user ID | warning |
+| 429 `RATE_LIMITED` | Too many requests. Please wait a moment and try again. | warning |
 | 503 `TEMPORARY_FAILURE` | Temporarily unavailable | danger |
 
-The table is typed `satisfies Record<FeedbackCode, ...>` over the web module's `FeedbackCode` union so every known frontend code has a banner; any unlisted backend code (such as `RATE_LIMITED`) falls back to `FALLBACK_PURCHASE_FEEDBACK` (`"Purchase failed"`).
+The table is typed `satisfies Record<FeedbackCode, ...>` over the web module's `FeedbackCode` union so every known frontend code has a banner; any unlisted backend code falls back to `FALLBACK_PURCHASE_FEEDBACK` (`"Purchase failed"`).

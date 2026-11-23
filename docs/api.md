@@ -2,17 +2,17 @@
 
 # HTTP API
 
-Every example below is a real response from the running stack. All routes except `/health` and `/metrics` live under `/api/v1`. Bodies are JSON except `/metrics`, which returns Prometheus text, and Fastify attaches `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: no-referrer` on every response (with a `16 KiB` JSON body limit). Buyer routes have no user authentication, so the user id is a plain identifier ([design-decisions.md](design-decisions.md#15-optional-rate-limiting-and-admin-key-no-buyer-auth) says why); `RATE_LIMIT_ENABLED` optionally enables per-IP rate limiting (keyed on `request.ip` governed by `TRUST_PROXY`) and `ADMIN_API_KEY` optionally protects the reset route. Through nginx `/api/` and exact `/health` work on the web port (`/metrics` stays internal on port 3000 — requesting `:8080/metrics` falls through to nginx's SPA `index.html`), so the browser uses relative URLs and the API needs no CORS.
+Every example below is a real response from the running stack. All routes except `/health` and `/metrics` live under `/api/v1`. Bodies are JSON except `/metrics`, which returns Prometheus text, and Fastify attaches `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: no-referrer` on every API response (with a `16 KiB` JSON body limit). Buyer routes have no user authentication, so the user id is a plain identifier ([design-decisions.md](design-decisions.md#15-optional-rate-limiting-and-admin-key-no-buyer-auth) says why); `RATE_LIMIT_ENABLED` optionally enables per-IP rate limiting (keyed on `request.ip` governed by `TRUST_PROXY`) and `ADMIN_API_KEY` optionally protects the reset route. Through nginx `/api/` and exact `/health` work on the web port (`/metrics` stays internal on port 3000 — requesting `:8080/metrics` falls through to nginx's SPA `index.html`, and `location /` adds the security headers plus `Content-Security-Policy` on static responses), so the browser uses relative URLs and the API needs no CORS.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/health` | Liveness of PostgreSQL and Redis |
 | `GET` | `/metrics` | Internal Prometheus counters and BullMQ queue gauges (internal port `3000`, not proxied by nginx; unpublished on host in `docker-compose.scaled.yml`) |
 | `GET` | `/api/v1/products/featured` | The product on sale (60 s singleflight cache, `Cache-Control: public, max-age=60, stale-while-revalidate=300`) |
-| `GET` | `/api/v1/flash-sales/current` | Sale state, stock, window and server time |
+| `GET` | `/api/v1/flash-sales/current` | Sale state, stock, window and server time (`Cache-Control: no-store`) |
 | `POST` | `/api/v1/checkout/purchase` | Try to buy one unit |
-| `GET` | `/api/v1/orders/user/:userId` | Whether a buyer holds a unit |
-| `POST` | `/api/v1/admin/flash-sales/reset` | Demo tool: reset the sale |
+| `GET` | `/api/v1/orders/user/:userId` | Whether a buyer holds a unit (`Cache-Control: no-store`) |
+| `POST` | `/api/v1/admin/flash-sales/reset` | Demo tool: reset the sale (requires `Content-Type: application/json`) |
 
 ## Errors
 
@@ -33,8 +33,9 @@ Every API error response normalized by `GlobalExceptionFilter` has the same two 
 | `ALREADY_PURCHASED` | 409 | The buyer already holds a unit |
 | `SOLD_OUT` | 410 | No stock is left |
 | `PAYLOAD_TOO_LARGE` | 413 | Request body exceeds the `16 KiB` Fastify `bodyLimit` |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | `POST /api/v1/admin/flash-sales/reset` without `Content-Type: application/json` |
 | `SALE_UPCOMING`, `SALE_ENDED` | 422 | The request is outside the sale window |
-| `RATE_LIMITED` | 429 | Per-IP rate limit exceeded on checkout or order lookup when `RATE_LIMIT_ENABLED=true` |
+| `RATE_LIMITED` | 429 | Per-IP rate limit exceeded on checkout, order lookup, or admin reset when `RATE_LIMIT_ENABLED=true` |
 | `TEMPORARY_FAILURE` | 503 | Redis, PostgreSQL (during fallback/health/reset), or the queue failed, the stock key is missing, or a reset could not acquire `maintenance_lock` (2 s) or waited out in-flight jobs (10 s). Safe to try again later |
 | `INTERNAL_ERROR` | 500 | Anything else. The detail goes to the log and never to the client |
 
@@ -70,7 +71,7 @@ Internal Prometheus text endpoint (`Content-Type: text/plain; version=0.0.4; cha
 }
 ```
 
-Prices are integers in cents, so no float rounding. `ProductsService` caches the product in memory for 60 s with singleflight coalescing (concurrent cache misses share one PostgreSQL read), emits `Cache-Control: public, max-age=60, stale-while-revalidate=300`, and serves its last known copy if PostgreSQL is temporarily unavailable. Redis holds only what the purchase gate needs.
+Prices are integers in cents, so no float rounding. `ProductsService` caches the product in memory for 60 s with singleflight coalescing (concurrent cache misses share one PostgreSQL read), emits `Cache-Control: public, max-age=60, stale-while-revalidate=300`, and serves its last known copy (with a 5 s backoff before retrying PostgreSQL) if PostgreSQL is temporarily unavailable. Redis holds only what the purchase gate needs.
 
 ## `GET /api/v1/flash-sales/current`
 
@@ -92,7 +93,7 @@ Prices are integers in cents, so no float rounding. `ProductsService` caches the
 | `remainingStock` | Units not yet reserved or sold. It drops at the reservation, not at the order |
 | `serverTime` | The API's clock when it computed the answer. Clients should count from it and not from their own clock |
 
-Only the Redis snapshot (`saleId`, `totalStock`, `remainingStock`, `startsAtMs`, `endsAtMs`) is micro-cached in the API for 200 ms; `serverTime` and `saleState` are computed fresh from `ClockService` on every request, so `serverTime` is current and window transitions happen immediately. Answers 404 `FLASH_SALE_NOT_FOUND` when Redis holds no config, and 503 `TEMPORARY_FAILURE` when the config exists but the stock key is missing.
+Only `FOUND` Redis snapshots (`saleId`, `totalStock`, `remainingStock`, `startsAtMs`, `endsAtMs`, clamped `remainingStock >= 0`) are micro-cached in the API for 200 ms (`Cache-Control: no-store`); `serverTime` and `saleState` are computed fresh from `ClockService` on every request, so `serverTime` is current and window transitions happen immediately. When Redis holds no config (`NOT_CONFIGURED`), `FlashSalesService` checks PostgreSQL without caching the miss: if PostgreSQL has a campaign row (or is unavailable), it answers `503 TEMPORARY_FAILURE` until hydration completes rather than a false `404`; it answers `404 FLASH_SALE_NOT_FOUND` only when neither Redis nor PostgreSQL has a campaign, and `503 TEMPORARY_FAILURE` when config exists without the stock key.
 
 ## `POST /api/v1/checkout/purchase`
 
@@ -157,20 +158,20 @@ The id is normalized the same way as in the purchase.
 { "userId": "nobody-here", "hasPurchased": false, "status": "NONE", "orderId": null }
 ```
 
-The lookup answers from Redis first, in constant time (`readSlotWithLedgerState` checks `:users` and `EXISTS` on `:config` and `:stock` in one `MULTI`). When the user has no slot and the Redis ledger is intact, it answers `NONE` directly without touching PostgreSQL (preventing cache-penetration DB scans on unknown users); only when ledger keys are missing does it query PostgreSQL, returning `503 TEMPORARY_FAILURE` if PostgreSQL is also down. A purchase answers 202 in a few milliseconds and the worker is fast, so a lookup right after a purchase usually already says `CONFIRMED`, and `RESERVED` shows up only in a short window. An invalid id answers 400. When `RATE_LIMIT_ENABLED=true`, responses include `X-RateLimit-Limit` and `X-RateLimit-Remaining` (keyed by route template + `request.ip`, governed by `TRUST_PROXY`), and exceeding the per-IP limit answers 429 `RATE_LIMITED` with `Retry-After`.
+The lookup answers from Redis first, in constant time (`readSlotWithLedgerState` checks `:users` and `EXISTS` on `:config` and `:stock` in one `MULTI`), and emits `Cache-Control: no-store`. When the user has no slot and the Redis ledger is intact, it answers `NONE` directly without touching PostgreSQL (preventing cache-penetration DB scans on unknown users); only when ledger keys are missing does it query PostgreSQL, returning `503 TEMPORARY_FAILURE` if PostgreSQL is also down. A purchase answers 202 in a few milliseconds and the worker is fast, so a lookup right after a purchase usually already says `CONFIRMED`, and `RESERVED` shows up only in a short window. An invalid id answers 400. When `RATE_LIMIT_ENABLED=true`, responses include `X-RateLimit-Limit` and `X-RateLimit-Remaining` (keyed by route template + `request.ip`, governed by `TRUST_PROXY`), and exceeding the per-IP limit answers 429 `RATE_LIMITED` with `Retry-After`.
 
 ## `POST /api/v1/admin/flash-sales/reset`
 
-A demo and test tool. It answers 404 unless `ENABLE_ADMIN_ENDPOINTS=true` (the code default is `false`, while `.env.example` and Compose turn it on). When `ADMIN_API_KEY` is non-empty, callers must pass a matching `x-admin-key` header (checked with constant-time comparison) or receive `401 UNAUTHORIZED`.
+A demo and test tool. It answers 404 unless `ENABLE_ADMIN_ENDPOINTS=true` (the code default is `false`, while `.env.example` and Compose turn it on; in `production`, `AdminEndpointsGuard` logs a startup warning if `ENABLE_ADMIN_ENDPOINTS=true` without `ADMIN_API_KEY`). When `ADMIN_API_KEY` is non-empty, callers must pass a matching `x-admin-key` header (checked with constant-time comparison) or receive `401 UNAUTHORIZED`. `POST` requests must carry `Content-Type: application/json` (`415 UNSUPPORTED_MEDIA_TYPE` otherwise, blocking simple-request browser CSRF) and share `RateLimitGuard` throttling (`429 RATE_LIMITED` when `RATE_LIMIT_ENABLED=true`).
 
-Every field is optional, and a missing body counts as `{}`.
+Every field is optional, and `{}` uses defaults.
 
 | Field | Type and range | Meaning |
 | --- | --- | --- |
 | `totalStock` | integer, 0 to 1,000,000 | Units for sale. Also sets `remaining_stock` |
 | `startsOffsetSeconds` | integer, ±1 year | Start, in seconds from now. Negative opens the window in the past |
 | `durationSeconds` | integer, 1 second to 1 year | Length of the window |
-| `startsAt`, `endsAt` | ISO-8601 timestamps | An absolute window. Cannot be mixed with the two relative fields |
+| `startsAt`, `endsAt` | Zoned RFC 3339 timestamps | An absolute window with `Z` or `±HH:MM` offset. Cannot be mixed with the two relative fields |
 
 Absent fields fall back to the configured sale (see `SALE_*` in [development.md](development.md#configuration)). Unknown fields, including `productName`, answer 400.
 

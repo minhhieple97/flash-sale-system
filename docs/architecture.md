@@ -33,12 +33,12 @@ flowchart LR
 
 | Component | Job | State it owns | When it is down |
 | --- | --- | --- | --- |
-| nginx | Serves the React build, pools `keepalive 256` (`keepalive_requests 10000`, HTTP/1.1) to `api:3000` with 10 s Docker DNS re-resolution, overwrites `X-Forwarded-For` and `X-Real-IP` with `$remote_addr`, adds gzip and security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`), enforces 5 s connect / 15 s read+send proxy timeouts, and proxies `/api/` and exact `/health` (never `/metrics`) so the browser uses relative URLs and the API needs no CORS | None | The storefront is unreachable. The API still answers on its own port (single-node mode) |
-| API (HTTP) | Validates input, enforces optional per-IP `RateLimitGuard` (keyed by `request.ip` under `TRUST_PROXY`, capped at 50,000 buckets with O(1) eviction) and `ADMIN_API_KEY`, runs the purchase gate, answers `200`, `202`, `400`, `401`, `404`, `409`, `410`, `413`, `422`, `429` or `503`, serves status, product (`Cache-Control: public, max-age=60, stale-while-revalidate=300`), lookup, `/health`, and `/metrics` | 60 s singleflight product micro-cache (+ stale `lastKnownProduct`), 200 ms status snapshot cache, optional in-memory rate-limit buckets, per-process metrics counters | Purchases stop. Reservations already made stay in Redis, and their jobs stay queued |
+| nginx | Serves the React build, pools `keepalive 256` (`keepalive_requests 10000`, HTTP/1.1) to `api:3000` with 10 s Docker DNS re-resolution, overwrites `X-Forwarded-For` and `X-Real-IP` with `$remote_addr`, adds gzip, sets security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Content-Security-Policy`) on static `location /` responses without duplicating API headers, enforces 5 s connect / 15 s read+send proxy timeouts, and proxies `/api/` and exact `/health` (never `/metrics`) so the browser uses relative URLs and the API needs no CORS | None | The storefront is unreachable. The API still answers on its own port (single-node mode) |
+| API (HTTP) | Validates input, enforces optional per-IP `RateLimitGuard` (keyed by `request.ip` under `TRUST_PROXY`, capped at 50,000 buckets with O(1) eviction), `ADMIN_API_KEY`, and `Content-Type: application/json` (`415` on admin reset), runs the purchase gate, answers `200`, `202`, `400`, `401`, `404`, `409`, `410`, `413`, `415`, `422`, `429` or `503`, serves status (`Cache-Control: no-store`, PG-checked `503` vs `404` on `NOT_CONFIGURED`), product (`Cache-Control: public, max-age=60, stale-while-revalidate=300`), lookup (`Cache-Control: no-store`), `/health`, and `/metrics` | 60 s singleflight product micro-cache (+ stale `lastKnownProduct` with 5 s DB retry backoff), 200 ms status snapshot cache (`FOUND` only), optional in-memory rate-limit buckets, per-process metrics counters | Purchases stop. Reservations already made stay in Redis, and their jobs stay queued |
 | Worker | Turns a reservation into a PostgreSQL order and confirms it in Redis | None | Jobs wait in the queue. Buyers keep getting 202 until stock runs out |
-| Ledger maintenance | At boot (all roles; 50 × 100 ms lease retry, skips with warning if held): hydrates Redis and sweeps per `APP_ROLE` (`all`: threshold 1, `api`: skipped, `worker`: threshold 2). Every 30 s (`all` or `worker`; 1-shot lease): finishes an in-memory pending reset, restores lost Redis keys in 1,000-row batches from PostgreSQL, releases orphaned reservations (threshold 2) | Orphan strike counts and an in-memory pending reset plan | Self-healing pauses. Nothing breaks until something else fails |
+| Ledger maintenance | At boot (all roles; 50 × 100 ms lease retry, skips with warning if held): hydrates Redis, fences `queue.resume()` under the lease, and sweeps per `APP_ROLE` (`all`: threshold 1, `api`: skipped, `worker`: threshold 2). Every 30 s (`all` or `worker`; 1-shot lease): finishes an in-memory pending reset, restores lost Redis keys in 1,000-row batches from PostgreSQL, fences `queue.resume()`, and releases orphaned reservations (threshold 2) | Orphan strike counts and an in-memory pending reset plan | Self-healing pauses. Nothing breaks until something else fails |
 | Redis | Decides who gets a unit, holds the order queue and maintenance lease | Sale config, stock counter, buyer entries, maintenance lock, queue | Every route answers 503 within about 2 s. See [fault-tolerance.md](fault-tolerance.md) |
-| PostgreSQL | Durable orders, and the last guard against oversell and duplicates | `products`, `flash_sales`, `orders` | Purchases still answer 202, intact-ledger lookups answer `RESERVED`/`CONFIRMED`/`NONE` from Redis, and warm featured-product caches serve `lastKnownProduct` (cold product cache and missing-ledger fallback answer `503`). Orders land when PostgreSQL returns |
+| PostgreSQL | Durable orders, and the last guard against oversell and duplicates | `products`, `flash_sales`, `orders` | Purchases still answer 202, intact-ledger lookups answer `RESERVED`/`CONFIRMED`/`NONE` from Redis, and warm featured-product caches serve `lastKnownProduct` with a 5 s retry backoff (cold product cache and missing-ledger fallback answer `503`). Orders land when PostgreSQL returns |
 
 By default (`APP_ROLE=all`), the API and the worker share one Node process. Setting `APP_ROLE=api` and `APP_ROLE=worker` (configured in `docker-compose.scaled.yml`) splits HTTP replicas from the background worker and maintenance loop; see [scaling.md](scaling.md).
 
@@ -81,7 +81,7 @@ Every entry in the `users` hash holds exactly one unit, `RESERVED` or `CONFIRMED
 | `attemptPurchase` | The purchase gate: resend, window, duplicate, stock, then `DECR` and `HSET RESERVED` | Checkout, for every purchase |
 | `confirmPurchase` | Writes `CONFIRMED:<id>` only while the entry is `RESERVED:<orderId>` (or already that `CONFIRMED` value) | The worker after the commit, and compensation |
 | `rollbackPurchase` | Deletes the entry and returns the unit, only while the entry is `RESERVED:<orderId>`. A missing stock key stays missing | Compensation, and the enqueue-failure path |
-| `adoptOrder` | When PostgreSQL holds an order whose Redis entry is gone, writes `CONFIRMED` and takes one unit, only if the entry is absent and stock is above 0 | `confirmCommitted`, when `confirmPurchase` finds nothing to confirm |
+| `adoptOrder` | When PostgreSQL holds an order whose Redis entry is gone, writes `CONFIRMED` and takes one unit as long as the stock key exists (even when `stock <= 0`, clamping displayed `remainingStock >= 0` in the codec) and the entry is absent | `confirmCommitted`, when `confirmPurchase` finds nothing to confirm |
 | `restoreConfirmedBatch` | Writes a batch (up to 1,000) of `CONFIRMED` entries with `HSETNX` without overwriting existing entries | Boot and the maintenance tick, via keyset pagination |
 | `restoreSale` | Writes only what is missing: the config hash, any trailing `CONFIRMED` entries (`HSETNX`), and the stock key as `totalStock - HLEN(users)` | Boot, and the maintenance tick |
 | `releaseLock` | Deletes `maintenance_lock` only if its value equals the caller's `ownerToken` | Boot, maintenance tick, and admin reset `finally` cleanup |
@@ -125,7 +125,7 @@ The two `CHECK` constraints on `flash_sales` mean a bug cannot push stock below 
 
 ## Backend modules
 
-The API is NestJS 11 on Fastify (`AppModule.forRole(APP_ROLE)` registers business HTTP controllers for `all` and `api`, keeps `HealthModule` and `MetricsModule` on all roles including `worker`, keeps `LedgerMaintenanceService` for boot hydration on `api` while disabling scheduled ticks and boot sweeps, and runs the BullMQ worker + scheduled maintenance on `all` and `worker`). Each domain module lives in `apps/api/src/modules/<domain>/`.
+The API is NestJS 11 on Fastify (`loadDotEnvFiles()` runs before `parseAppRole`/`parseTrustProxy`; `AppModule.forRole(APP_ROLE)` splits `ProductsCoreModule`, `FlashSalesCoreModule`, and `OrdersCoreModule` so `worker` mounts zero business controllers and `api` registers no `BullModule` consumer queue/processor, keeps `HealthModule` and `MetricsModule` on all roles, keeps `LedgerMaintenanceService` for boot hydration on `api` while disabling ticks and boot sweeps, and runs the BullMQ worker + scheduled maintenance on `all` and `worker`). Each domain module lives in `apps/api/src/modules/<domain>/`.
 
 ```mermaid
 flowchart TD
@@ -178,22 +178,23 @@ The process holds three Redis connections with different failure behavior. This 
 | Queue producer | `queue.add` on each purchase | The same fail-fast options, without auto-pipelining |
 | Queue worker | The BullMQ worker and its blocking client | ioredis defaults. A blocking read outlasts any command timeout, and the worker should wait out a reconnect and not fail |
 
-The hot-path client waits for `ready` before the app starts. PostgreSQL uses a pool of 20 connections, as many as the worker concurrency, with a 2 s connect timeout and a 5 s statement timeout.
+The hot-path client waits for `ready` before the app starts. PostgreSQL uses `DATABASE_POOL_MAX` connections when set (`1–200`), otherwise defaulting to `5` for `APP_ROLE=api` and `20` for `all` or `worker`, with a 2 s connect timeout and a 5 s statement timeout.
 
-A Redis or PostgreSQL error that is not an `HttpException` goes through one place, the global exception filter (`GlobalExceptionFilter`). If it matches an unreachable Redis (a timeout, a closed stream, `ECONNREFUSED`) or an unavailable PostgreSQL (`isDatabaseUnavailable`: SQLSTATE `08*`/`57P*`/`53300`, socket faults, pool or statement timeouts), the filter answers `503 TEMPORARY_FAILURE` and logs a warning. Anything else is a `500 INTERNAL_ERROR` with a stack in the log. `app.setup.ts` also attaches `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: no-referrer` on all API responses.
+A Redis or PostgreSQL error that is not an `HttpException` goes through one place, the global exception filter (`GlobalExceptionFilter`). If it matches an unreachable Redis (a timeout, a closed stream, `ECONNREFUSED`) or an unavailable PostgreSQL (`isDatabaseUnavailable`: SQLSTATE `08*`/`57P*`/`53300`, socket faults, pool or statement timeouts), the filter answers `503 TEMPORARY_FAILURE` and logs a warning. Anything else (including corrupt Lua script reply assertions and JS `TypeError`/`RangeError` bugs rethrown by `CheckoutService`) is a `500 INTERNAL_ERROR` with a stack in the log. `app.setup.ts` also attaches `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: no-referrer` on all API responses.
 
 ### Boot and shutdown
 
 ```mermaid
 flowchart TD
-    env["Validate the environment<br/>APP_ROLE, TRUST_PROXY, SALE_* stop boot if invalid"] --> redisReady["Connect Redis and wait for ready"]
+    env["Load .env & validate environment<br/>APP_ROLE, TRUST_PROXY, SALE_* stop boot if invalid"] --> redisReady["Connect Redis and wait for ready"]
     redisReady --> ddl["Create tables under an advisory lock (OnModuleInit)"]
-    ddl --> resume["Resume queue and register metrics collector<br/>OrdersCoreModule OnApplicationBootstrap (runs deepest first)"]
-    resume --> lease["Acquire Redis maintenance_lock<br/>up to 50 x 100 ms retries; skip with warning if held"]
+    ddl --> regMetrics["Register queue depth collector<br/>OrdersCoreModule OnApplicationBootstrap"]
+    regMetrics --> lease["Acquire Redis maintenance_lock<br/>up to 50 x 100 ms retries; skip with warning if held"]
     lease --> seed["Seed the product and the sale row if absent"]
     seed --> apply["Apply explicit SALE_* values to the stored sale<br/>only if it has no order and no ledger entry"]
     apply --> restore["Restore lost Redis keys from PostgreSQL<br/>1,000-row batches, write only what is missing"]
-    restore --> sweep["Sweep orphaned reservations per APP_ROLE<br/>all: threshold 1 (BOOT) | worker: threshold 2 (INTERVAL) | api: skipped"]
+    restore --> resumeQ["Resume queue (fenced under maintenance_lock)"]
+    resumeQ --> sweep["Sweep orphaned reservations per APP_ROLE<br/>all: threshold 1 (BOOT) | worker: threshold 2 (INTERVAL) | api: skipped"]
     sweep --> release["Release maintenance_lock (finally)"]
     release --> listen["Open the HTTP listener"]
 ```
@@ -226,11 +227,11 @@ A module imports another only through its `index.ts`. Checkout imports the confi
 
 How the browser stays correct without a socket:
 
-- **Rejections are values.** The HTTP client never throws. It returns `{ ok: true, data }` or `{ ok: false, status, error }`, and a network failure becomes status 0 with `NETWORK_ERROR`.
-- **State is modeled explicitly as discriminated unions.** Request hooks hold `idle | loading | success | error`, the confirmation poller holds `idle | polling | confirmed | released | timed-out`, the scenario drawer holds `idle | applying | applied | failed`, and the status hook tracks `{ sale, error }`, so a component cannot show a receipt and an error together.
+- **Rejections are values.** The HTTP client never throws, guards empty/non-JSON `2xx` replies with `INVALID_RESPONSE`, and returns `{ ok: true, data }` or `{ ok: false, status, error }` (network failures become status 0 `NETWORK_ERROR`).
+- **State is modeled explicitly as discriminated unions.** Request hooks hold `idle | loading | success | error`, the confirmation poller (1,000 ms × 30 attempts, keyed on `[userId, orderId]` so same-user retries after release/timeout start a fresh watch session) holds `idle | polling | confirmed | released | timed-out`, the scenario drawer (showing `AdminKeyField` on `401` and resending `x-admin-key`) holds `idle | applying | applied | failed`, and the status hook tracks `{ sale, error }`.
 - **Polling never overlaps.** `usePolling` runs a task, waits for it, then schedules the next run, so a slow response cannot stack requests.
 - **Components start nothing.** They hold no timer and make no request. Hooks do.
-- **The countdown trusts the server clock.** It counts from the response's `serverTime` plus the time elapsed since, so a laptop clock that is hours off still shows the right seconds. The same offset moves the sale from `UPCOMING` to `ACTIVE` on the second it opens, so Buy Now enables within one 250 ms tick and does not wait for the next 2 s poll. The server stays the judge, and a click a moment early gets `SALE_UPCOMING`.
+- **The countdown trusts the server clock.** It counts from the response's `serverTime` plus the time elapsed since, so a laptop clock that is hours off still shows the right seconds. `useEffectiveSaleState` schedules one boundary `setTimeout` (clamped for 32-bit timer safety) rather than a 250 ms polling interval, eliminating idle re-renders while flipping `UPCOMING` -> `ACTIVE` -> `ENDED` on the exact boundary. The server stays the judge, and a click a moment early gets `SALE_UPCOMING`.
 - **Stale snapshots lose.** The status hook drops a snapshot whose `serverTime` is older than the one it holds, so a slow poll cannot undo a reset.
 - **A result stays visible while the next purchase is pending.** The banner keeps the previous outcome until the new answer arrives, so the card does not flash empty.
 

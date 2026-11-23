@@ -71,17 +71,18 @@ Set `VITE_API_PROXY_TARGET` when the API runs on another port.
 | `PORT`, `WEB_PORT` | 3000, 8080 | API port and nginx port |
 | `POSTGRES_HOST`, `POSTGRES_PORT`, `REDIS_HOST`, `REDIS_PORT` | localhost, 5432, localhost, 6379 | Connections. Compose overrides both hosts and internal container ports (`5432`/`6379`) |
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | `flash_sale` | PostgreSQL credentials and database |
-| `APP_ROLE` | `all` | `all` (API + worker + 30 s ticks + 1-strike boot sweep), `api` (HTTP + boot hydration only; no ticks or boot sweep), or `worker` (queue consumer + 30 s ticks + 2-strike boot sweep + `/health` & `/metrics`) |
+| `DATABASE_POOL_MAX` | unset (`# 20`) | Optional pool size (`1`–`200`). Defaults to `5` when `APP_ROLE=api` and `20` for `all` or `worker` |
+| `APP_ROLE` | `all` | `all` (API + worker + 30 s ticks + 1-strike boot sweep), `api` (HTTP + boot hydration only; no BullMQ worker/consumer queue, ticks, or boot sweep), or `worker` (queue consumer + 30 s ticks + 2-strike boot sweep + `/health` & `/metrics` only) |
 | `ENABLE_ADMIN_ENDPOINTS` | true | Turns on the reset route. The code default is false |
 | `ADMIN_API_KEY` | unset | Optional shared secret for `POST /api/v1/admin/flash-sales/reset` (`x-admin-key` header) |
-| `TRUST_PROXY` | false | Strict `true`/`false` for Fastify `trustProxy` (used by `RateLimitGuard` via `request.ip`). Compose defaults `${TRUST_PROXY:-true}` behind nginx's `X-Forwarded-For $remote_addr`; note that copying `.env.example` sets `TRUST_PROXY=false` in `.env` unless changed |
-| `RATE_LIMIT_ENABLED` | false | Enables per-IP in-memory rate limiting on checkout and order-lookup routes (max `50,000` buckets per process) |
+| `TRUST_PROXY` | unset (`# false`) | Strict `true`/`false` for Fastify `trustProxy` (used by `RateLimitGuard` via `request.ip`). Code defaults to `false`; Compose defaults `${TRUST_PROXY:-true}` behind nginx's `X-Forwarded-For $remote_addr` |
+| `RATE_LIMIT_ENABLED` | false | Enables per-IP in-memory rate limiting on checkout, order-lookup, and admin reset routes (max `50,000` buckets per process) |
 | `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX` | 60000, 60 | Rate-limit window (`1000`–`3600000` ms) and max requests (`1`–`100000`) per IP/route |
-| `LOG_LEVEL` | info | Pino log level |
+| `LOG_LEVEL` | info | Pino log level (`fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`) |
 | `SALE_STARTS_AT`, `SALE_ENDS_AT` | unset | The sale window. Set both or neither. RFC 3339 with `Z` or an offset, for example `2030-01-01T09:00:00+07:00` |
 | `SALE_TOTAL_STOCK` | unset | An integer from 1 to 1,000,000 |
 
-The API validates the environment at boot and refuses to start on a bad value, with a message that names the variable.
+The API loads `.env` via `loadDotEnvFiles()` at the top of `bootstrap()` before reading `APP_ROLE` or `TRUST_PROXY`, then validates the environment at boot and refuses to start on a bad value, with a message that names the variable.
 
 How the `SALE_*` variables act:
 
@@ -134,10 +135,10 @@ The storefront shows the same things: open two browser tabs, set the "High Scarc
 | `pnpm test:scripts` | Tests for the architecture check and the stress math | Nothing |
 | `pnpm lint` | Biome, then the architecture check | Nothing |
 | `pnpm -r typecheck`, `pnpm -r build` | TypeScript and builds | Nothing |
-| `pnpm verify` | All of the above in order, one `PASS` or `FAIL` line each | `postgres` and `redis` healthy, `api` stopped |
+| `pnpm verify` | All of the above in order, one `PASS` or `FAIL` line each | `postgres` and `redis` healthy, `api` and `worker` stopped |
 | `pnpm stress:node`, `stress:node:mixed`, `stress:node:pg-blip`, `stress:k6:oversell`, `stress:k6:same-user`, `stress:k6:realistic` | The stress suite (`realistic` runs mixed read+write through nginx at `http://web:80`; the rest target `api:3000` / `BASE_URL` directly) | Running Compose stack (`web` also needed for `realistic` or scaled mode). See [benchmarks.md](benchmarks.md) |
 
-The integration suites share one PostgreSQL, one Redis and one queue name, and Jest runs them one at a time (`maxWorkers: 1`). A running `api` container has a worker on that queue, and it would take and fail the suites' jobs, so run `docker compose stop api web` first. [testing.md](testing.md) explains the levels.
+The integration suites share one PostgreSQL, one Redis and one queue name, and Jest runs them one at a time (`maxWorkers: 1`). A running `api` or `worker` container consumes from that queue and fails the suites' jobs, so run `docker compose -f docker-compose.yml -f docker-compose.scaled.yml stop api web worker` first. [testing.md](testing.md) explains the levels.
 
 ## Troubleshooting
 
