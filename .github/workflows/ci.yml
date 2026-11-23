@@ -26,7 +26,7 @@ jobs:
       - run: pnpm --filter @flash-sale/api test:unit
       - run: pnpm --filter @flash-sale/web test
       - run: pnpm -r build
-      - run: docker compose config -q && docker compose -f docker-compose.yml -f docker-compose.scaled.yml config -q
+      - run: docker compose config -q
 
   api-integration:
     runs-on: ubuntu-latest

@@ -35,13 +35,13 @@ run_step() {
 
 check_api_container_stopped() {
   local log="$LOG_DIR/api-container.log" ids
-  ids="$(docker compose -f docker-compose.yml -f docker-compose.scaled.yml ps -q --status running api worker 2>"$log")"
+  ids="$(docker compose ps -q --status running api 2>"$log")"
   if [ -n "$ids" ]; then
-    echo "the compose api or worker container is running; its BullMQ worker consumes and fails the integration suites' jobs" >>"$log"
-    echo "run: docker compose -f docker-compose.yml -f docker-compose.scaled.yml stop api web worker" >>"$log"
+    echo "the compose api container is running; its BullMQ worker consumes and fails the integration suites' jobs" >>"$log"
+    echo "run: docker compose stop api web" >>"$log"
   fi
   [ -z "$ids" ]
-  report "compose api and worker containers stopped" $? "$log"
+  report "compose api container stopped" $? "$log"
 }
 
 check_jest_open_handles() {
@@ -57,8 +57,8 @@ check_jest_open_handles() {
 
 check_container postgres
 check_container redis
-run_step "pnpm lint (biome + arch-check, whole repo)" lint pnpm lint
-run_step "pnpm test:scripts (arch-check tests)" test-scripts pnpm test:scripts
+run_step "pnpm lint (biome)" lint pnpm lint
+run_step "pnpm test:scripts (stress math tests)" test-scripts pnpm test:scripts
 run_step "pnpm -r typecheck" typecheck pnpm -r typecheck
 check_api_container_stopped
 check_jest_open_handles

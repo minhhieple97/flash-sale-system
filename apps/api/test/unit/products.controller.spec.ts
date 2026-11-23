@@ -3,9 +3,11 @@ import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fa
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { configureApp } from '../../src/app.setup';
-import { FEATURED_PRODUCT_CACHE_CONTROL } from '../../src/modules/products/constants/products.constants';
 import { ProductsController } from '../../src/modules/products/controllers/products.controller';
-import type { Product } from '../../src/modules/products/interfaces/product.interface';
+import {
+  FEATURED_PRODUCT_CACHE_CONTROL,
+  type Product,
+} from '../../src/modules/products/products.types';
 import { ProductsService } from '../../src/modules/products/services/products.service';
 
 const PRODUCT: Product = {

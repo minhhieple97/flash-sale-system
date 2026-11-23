@@ -1,5 +1,4 @@
-import type { AsyncState } from '@/shared/types/async-state.types';
-import type { Tone } from '@/shared/types/tone.types';
+import type { AsyncState, Tone } from '@/shared/types/common.types';
 
 export type OrderState = 'NONE' | 'RESERVED' | 'CONFIRMED';
 

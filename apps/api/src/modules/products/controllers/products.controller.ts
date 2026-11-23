@@ -3,8 +3,8 @@ import {
   FEATURED_PRODUCT_CACHE_CONTROL,
   FEATURED_PRODUCT_ROUTE,
   PRODUCTS_ROUTE,
-} from '../constants/products.constants';
-import { ProductResponseDto } from '../dto/product.response.dto';
+  ProductResponseDto,
+} from '../products.types';
 import { ProductsService } from '../services/products.service';
 
 @Controller(PRODUCTS_ROUTE)

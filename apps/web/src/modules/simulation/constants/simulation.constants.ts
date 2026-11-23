@@ -1,4 +1,4 @@
-import type { Tone } from '@/shared/types/tone.types';
+import type { Tone } from '@/shared/types/common.types';
 import type { ScenarioPreset } from '../types/simulation.types';
 
 export const RESET_FLASH_SALE_PATH = '/admin/flash-sales/reset';

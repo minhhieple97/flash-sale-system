@@ -1,6 +1,5 @@
 import type { ClockService } from '../../src/common/providers/clock.service';
 import { FlashSaleResetService } from '../../src/modules/admin/services/flash-sale-reset.service';
-import { SaleMutationLock } from '../../src/modules/admin/services/sale-mutation-lock.service';
 import type {
   FlashSaleCampaign,
   FlashSaleStatus,
@@ -38,7 +37,6 @@ function campaignFor(params: RescheduleCampaignParams): FlashSaleCampaign {
 
 export interface ResetServiceMocks {
   service: FlashSaleResetService;
-  lock: SaleMutationLock;
   calls: string[];
   rescheduleCampaign: jest.Mock<Promise<FlashSaleCampaign>, [RescheduleCampaignParams]>;
   invalidateState: jest.Mock<Promise<void>, [string]>;
@@ -89,19 +87,16 @@ export function buildService(): ResetServiceMocks {
   } as unknown as SaleLedgerLeaseRepository;
   const persistence = { drainPendingJobs, resumeProcessing } as unknown as OrderPersistenceService;
   const clock = { nowMs: (): number => NOW_MS } as unknown as ClockService;
-  const lock = new SaleMutationLock();
   const service = new FlashSaleResetService(
     campaigns,
     flashSales,
     persistence,
     ledger,
     leases,
-    lock,
     clock,
   );
   return {
     service,
-    lock,
     calls,
     rescheduleCampaign,
     invalidateState,

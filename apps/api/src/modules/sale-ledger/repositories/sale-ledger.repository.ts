@@ -1,17 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { NormalizedUserId } from '../../../common/interfaces/user-id.interface';
-import {
-  collectReserved,
-  encodeConfirmedEntries,
-  parseEntry,
-} from '../codecs/reservation-entry.codec';
+import { encodeConfirmedEntries, parseEntry } from '../codecs/reservation-entry.codec';
 import { decodeSnapshot, encodeConfigFields } from '../codecs/sale-config.codec';
 import {
   flashSaleConfigKey,
+  flashSalePendingKey,
   flashSaleStockKey,
   flashSaleUsersKey,
   HYDRATION_BATCH_SIZE,
-  RESERVATION_SCAN_COUNT,
   SALE_LEDGER_REDIS,
 } from '../constants/sale-ledger.constants';
 import type {
@@ -43,6 +39,7 @@ export class SaleLedgerRepository {
       flashSaleConfigKey(saleId),
       flashSaleStockKey(saleId),
       flashSaleUsersKey(saleId),
+      flashSalePendingKey(saleId),
       userId,
       nowMs,
       orderId,
@@ -55,6 +52,7 @@ export class SaleLedgerRepository {
     const reply = await this.redis.rollbackPurchase(
       flashSaleStockKey(ref.saleId),
       flashSaleUsersKey(ref.saleId),
+      flashSalePendingKey(ref.saleId),
       ref.userId,
       ref.orderId,
     );
@@ -64,6 +62,7 @@ export class SaleLedgerRepository {
   async confirmReservation(ref: ReservationRef, confirmedOrderId: string): Promise<ConfirmOutcome> {
     const reply = await this.redis.confirmPurchase(
       flashSaleUsersKey(ref.saleId),
+      flashSalePendingKey(ref.saleId),
       ref.userId,
       ref.orderId,
       confirmedOrderId,
@@ -99,24 +98,25 @@ export class SaleLedgerRepository {
     return { slot: parseEntry(rawSlot), isLedgerIntact: existingCount === keys.length };
   }
 
-  async listReservations(saleId: string): Promise<ReservationRef[]> {
-    const reserved = new Map<string, string>();
-    let cursor = '0';
-    do {
-      const [next, fieldsAndValues] = await this.redis.hscan(
-        flashSaleUsersKey(saleId),
-        cursor,
-        'COUNT',
-        RESERVATION_SCAN_COUNT,
-      );
-      collectReserved(fieldsAndValues, reserved);
-      cursor = next;
-    } while (cursor !== '0');
-    return [...reserved].map(([userId, orderId]) => ({
-      saleId,
-      userId: userId as NormalizedUserId,
-      orderId,
-    }));
+  /** Lists pending RESERVED entries from the per-sale ZSET (`O(pending)`), pruning stale members. */
+  async listPendingReservations(saleId: string, olderThanMs?: number): Promise<ReservationRef[]> {
+    const pendingKey = flashSalePendingKey(saleId);
+    const maxScore = olderThanMs === undefined ? '+inf' : String(olderThanMs);
+    const userIds = await this.redis.zrangebyscore(pendingKey, '-inf', maxScore);
+    if (userIds.length === 0) return [];
+    const rawSlots = await this.redis.hmget(flashSaleUsersKey(saleId), ...userIds);
+    const refs: ReservationRef[] = [];
+    const stale: string[] = [];
+    for (let i = 0; i < userIds.length; i += 1) {
+      const slot = parseEntry(rawSlots[i] ?? null);
+      if (slot.status === 'RESERVED') {
+        refs.push({ saleId, userId: userIds[i] as NormalizedUserId, orderId: slot.orderId });
+      } else {
+        stale.push(userIds[i]);
+      }
+    }
+    if (stale.length > 0) await this.redis.zrem(pendingKey, ...stale);
+    return refs;
   }
 
   async countEntries(saleId: string): Promise<number> {
@@ -176,7 +176,7 @@ export class SaleLedgerRepository {
     const configKey = flashSaleConfigKey(saleId);
     const transaction = this.redis
       .multi()
-      .del(usersKey, configKey)
+      .del(usersKey, configKey, flashSalePendingKey(saleId))
       .hset(configKey, encodeConfigFields(state.snapshot))
       .set(flashSaleStockKey(saleId), String(remainingStock));
     for (const chunk of chunkArray(state.confirmed, HYDRATION_BATCH_SIZE)) {
@@ -190,6 +190,7 @@ export class SaleLedgerRepository {
       flashSaleConfigKey(saleId),
       flashSaleStockKey(saleId),
       flashSaleUsersKey(saleId),
+      flashSalePendingKey(saleId),
     );
   }
 }

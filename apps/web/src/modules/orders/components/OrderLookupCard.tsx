@@ -1,12 +1,36 @@
 import { type FormEvent, type ReactElement, useState } from 'react';
+import { Alert } from '@/shared/components/Alert';
 import { Card } from '@/shared/components/Card';
 import { LoadingSpinner } from '@/shared/components/LoadingSpinner';
 import { UserIdField } from '@/shared/components/UserIdField';
+import type { AsyncState } from '@/shared/types/common.types';
+import { LOOKUP_FAILED_TITLE, LOOKUP_PRESENTATION } from '../constants/orders.constants';
 import { useOrderLookup } from '../hooks/use-order-lookup';
-import { OrderLookupResult } from './OrderLookupResult';
+import type { OrderStatus } from '../types/orders.types';
+import { OrderReceiptBadge } from './OrderReceiptBadge';
 
 const SUBMIT_CLASSES =
   'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:cursor-not-allowed disabled:opacity-60';
+
+function OrderLookupResult({ state }: { state: AsyncState<OrderStatus> }): ReactElement | null {
+  if (state.status === 'error') {
+    return (
+      <Alert tone="danger" title={LOOKUP_FAILED_TITLE}>
+        {state.error.message}
+      </Alert>
+    );
+  }
+  if (state.status !== 'success') return null;
+  const { orderId, status, userId } = state.data;
+  const { tone, title } = LOOKUP_PRESENTATION[status];
+  const isConfirmed = status === 'CONFIRMED' && orderId !== null;
+  return (
+    <Alert tone={tone} title={title(userId)}>
+      {isConfirmed ? <OrderReceiptBadge orderId={orderId} userId={userId} /> : null}
+      {!isConfirmed && orderId ? <p className="font-mono text-xs">Order {orderId}</p> : null}
+    </Alert>
+  );
+}
 
 export function OrderLookupCard(): ReactElement {
   const [userId, setUserId] = useState('');

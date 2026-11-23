@@ -5,20 +5,13 @@ import {
   MAINTENANCE_DISABLED,
   MAINTENANCE_LEASE_TTL_MS,
 } from '../../src/modules/admin/constants/admin.constants';
-import type {
-  BootstrapSweepTrigger,
-  MaintenanceIntervalMs,
-} from '../../src/modules/admin/interfaces/admin.interface';
+import type { MaintenanceIntervalMs } from '../../src/modules/admin/interfaces/admin.interface';
 import type { FlashSaleHydrationService } from '../../src/modules/admin/services/flash-sale-hydration.service';
 import type { FlashSaleResetService } from '../../src/modules/admin/services/flash-sale-reset.service';
 import { LedgerMaintenanceService } from '../../src/modules/admin/services/ledger-maintenance.service';
-import { SaleMutationLock } from '../../src/modules/admin/services/sale-mutation-lock.service';
 import { ACTIVE_FLASH_SALE_ID } from '../../src/modules/flash-sales/constants/flash-sales.constants';
 import type { FlashSalesService } from '../../src/modules/flash-sales/services/flash-sales.service';
-import type {
-  OrphanSweepSummary,
-  SweepTrigger,
-} from '../../src/modules/orders/interfaces/order.interface';
+import type { OrphanSweepSummary } from '../../src/modules/orders/interfaces/order.interface';
 import type { OrphanSweeper } from '../../src/modules/orders/services/orphan-sweeper.service';
 import type {
   LedgerHydrationResult,
@@ -28,30 +21,24 @@ import type {
 
 const SWEEP: OrphanSweepSummary = {
   pending: 0,
-  candidates: 0,
   compensated: { CONFIRMED: 0, RELEASED: 0, NOT_RESERVED: 0 },
 };
 
-function buildBootstrapService(options?: {
-  intervalMs?: MaintenanceIntervalMs;
-  trigger?: BootstrapSweepTrigger;
-}) {
+function buildBootstrapService(intervalMs: MaintenanceIntervalMs = MAINTENANCE_DISABLED) {
   const hydrate = jest.fn(async (): Promise<LedgerHydrationResult> => 'ALREADY_PRESENT');
   const sweepOrphans = jest.fn(
-    async (_saleId: string, _trigger: SweepTrigger): Promise<OrphanSweepSummary> => SWEEP,
+    async (_saleId: string, _graceMs?: number): Promise<OrphanSweepSummary> => SWEEP,
   );
   const acquireMaintenanceLease = jest.fn<Promise<boolean>, [MaintenanceLease]>(async () => true);
   const releaseMaintenanceLease = jest.fn<Promise<boolean>, [string, string]>(async () => true);
   const resumeProcessing = jest.fn<Promise<void>, []>(async () => undefined);
   const service = new LedgerMaintenanceService(
-    new SaleMutationLock(),
     { hydrate, restoreIfLost: jest.fn() } as unknown as FlashSaleHydrationService,
     { sweepOrphans } as unknown as OrphanSweeper,
     { invalidateCache: jest.fn() } as unknown as FlashSalesService,
-    { completePendingReset: jest.fn(), resumeProcessing } as unknown as FlashSaleResetService,
-    options?.intervalMs ?? MAINTENANCE_DISABLED,
+    { resumeProcessing } as unknown as FlashSaleResetService,
+    intervalMs,
     { acquireMaintenanceLease, releaseMaintenanceLease } as unknown as SaleLedgerLeaseRepository,
-    options?.trigger,
   );
   return {
     service,
@@ -77,8 +64,8 @@ describe('LedgerMaintenanceService bootstrap coordination', () => {
     jest.restoreAllMocks();
   });
 
-  it('skips orphan sweep on bootstrap when trigger is null (api role)', async () => {
-    const built = buildBootstrapService({ trigger: null });
+  it('hydrates, resumes processing, and runs the boot sweep (graceMs = 0) under the Redis lease', async () => {
+    const built = buildBootstrapService(5_000);
     service = built.service;
 
     await built.service.onApplicationBootstrap();
@@ -86,24 +73,13 @@ describe('LedgerMaintenanceService bootstrap coordination', () => {
     expect(built.acquireMaintenanceLease).toHaveBeenCalledTimes(1);
     expect(built.hydrate).toHaveBeenCalledTimes(1);
     expect(built.resumeProcessing).toHaveBeenCalledTimes(1);
-    expect(built.sweepOrphans).not.toHaveBeenCalled();
+    expect(built.sweepOrphans).toHaveBeenCalledWith(ACTIVE_FLASH_SALE_ID, 0);
     expect(built.releaseMaintenanceLease).toHaveBeenCalledTimes(1);
-  });
-
-  it('uses the INTERVAL (2-strike) threshold on bootstrap for the worker role', async () => {
-    const built = buildBootstrapService({ intervalMs: 5_000, trigger: 'INTERVAL' });
-    service = built.service;
-
-    await built.service.onApplicationBootstrap();
-
-    expect(built.hydrate).toHaveBeenCalledTimes(1);
-    expect(built.resumeProcessing).toHaveBeenCalledTimes(1);
-    expect(built.sweepOrphans).toHaveBeenCalledWith(ACTIVE_FLASH_SALE_ID, 'INTERVAL');
     expect(jest.getTimerCount()).toBe(1);
   });
 
   it('retries acquiring the Redis lease during bootstrap before hydrating', async () => {
-    const built = buildBootstrapService({ trigger: 'BOOT' });
+    const built = buildBootstrapService();
     service = built.service;
     built.acquireMaintenanceLease
       .mockResolvedValueOnce(false)
@@ -127,7 +103,7 @@ describe('LedgerMaintenanceService bootstrap coordination', () => {
 
   it('warns and skips bootstrap hydration when another instance holds the lease past max attempts', async () => {
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    const built = buildBootstrapService({ intervalMs: 5_000, trigger: 'INTERVAL' });
+    const built = buildBootstrapService(5_000);
     service = built.service;
     built.acquireMaintenanceLease.mockResolvedValue(false);
 
@@ -145,7 +121,7 @@ describe('LedgerMaintenanceService bootstrap coordination', () => {
   });
 
   it('releases the lease even when hydrate throws on bootstrap', async () => {
-    const built = buildBootstrapService({ trigger: 'BOOT' });
+    const built = buildBootstrapService();
     service = built.service;
     built.hydrate.mockRejectedValueOnce(new Error('db down'));
 

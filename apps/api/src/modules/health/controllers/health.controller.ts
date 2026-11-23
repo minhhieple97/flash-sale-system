@@ -1,9 +1,7 @@
 import { Controller, Get, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 import { HEALTH_ROUTE } from '../../../common/constants/common.constants';
-import { HEALTH_HTTP_STATUS } from '../constants/health.constants';
-import type { HealthReport } from '../interfaces/health.interface';
-import { HealthService } from '../services/health.service';
+import { HEALTH_HTTP_STATUS, type HealthReport, HealthService } from '../services/health.service';
 
 @Controller(HEALTH_ROUTE)
 export class HealthController {

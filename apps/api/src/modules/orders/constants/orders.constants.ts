@@ -1,6 +1,5 @@
 import type { JobState, JobsOptions } from 'bullmq';
 import type { ReservationRef } from '../../sale-ledger';
-import type { OrphanStrikes, SweepTrigger } from '../interfaces/order.interface';
 
 export const ORDERS_ROUTE = 'orders';
 export const USER_ID_PARAM = 'userId';
@@ -50,11 +49,8 @@ export const PENDING_JOB_STATES: ReadonlySet<JobState | 'unknown'> = new Set([
   'waiting-children',
 ]);
 
-export const STRIKES_TO_COMPENSATE = { BOOT: 1, INTERVAL: 2 } as const satisfies Record<
-  SweepTrigger,
-  number
->;
-export const NO_STRIKES: OrphanStrikes = new Map();
+/** Reservations younger than this grace window are left alone so in-flight enqueues can land. */
+export const ORPHAN_GRACE_MS = 30_000;
 
 /** An admin reset waits this long for in-flight persistence jobs before answering 503. */
 export const RESET_ACTIVE_JOBS_POLL_MS = 25;

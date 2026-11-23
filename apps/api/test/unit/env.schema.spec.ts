@@ -1,4 +1,4 @@
-import { parseAppRole, parseTrustProxy, validateEnv } from '../../src/config/env.schema';
+import { parseTrustProxy, validateEnv } from '../../src/config/env.schema';
 
 const REQUIRED = {
   POSTGRES_HOST: 'localhost',
@@ -34,7 +34,6 @@ describe('validateEnv', () => {
     const env = validateEnv({ ...REQUIRED });
     expect(env).toMatchObject({
       NODE_ENV: 'development',
-      APP_ROLE: 'all',
       LOG_LEVEL: 'info',
       PORT: 3000,
       TRUST_PROXY: false,
@@ -67,8 +66,6 @@ describe('validateEnv', () => {
     ['LOG_LEVEL', 'verbose'],
     ['LOG_LEVEL', ''],
     ['ENABLE_ADMIN_ENDPOINTS', 'yes'],
-    ['APP_ROLE', 'scheduler'],
-    ['APP_ROLE', ''],
     ['TRUST_PROXY', 'yes'],
     ['RATE_LIMIT_ENABLED', 'yes'],
     ['RATE_LIMIT_WINDOW_MS', '999'],
@@ -199,12 +196,11 @@ describe('validateEnv', () => {
     });
   });
 
-  describe('role, admin key and rate limit variables', () => {
+  describe('admin key and rate limit variables', () => {
     it('parses valid values and treats an empty ADMIN_API_KEY as unset', () => {
       expect(
         validateEnv({
           ...REQUIRED,
-          APP_ROLE: 'api',
           ADMIN_API_KEY: 'super-secret',
           TRUST_PROXY: 'true',
           RATE_LIMIT_ENABLED: 'true',
@@ -212,28 +208,17 @@ describe('validateEnv', () => {
           RATE_LIMIT_MAX: '100000',
         }),
       ).toMatchObject({
-        APP_ROLE: 'api',
         ADMIN_API_KEY: 'super-secret',
         TRUST_PROXY: true,
         RATE_LIMIT_ENABLED: true,
         RATE_LIMIT_WINDOW_MS: 1000,
         RATE_LIMIT_MAX: 100_000,
       });
-      const blankKey = validateEnv({ ...REQUIRED, APP_ROLE: 'worker', ADMIN_API_KEY: '' });
-      expect([blankKey.APP_ROLE, blankKey.ADMIN_API_KEY]).toEqual(['worker', undefined]);
+      const blankKey = validateEnv({ ...REQUIRED, ADMIN_API_KEY: '' });
+      expect(blankKey.ADMIN_API_KEY).toBeUndefined();
     });
 
-    it('parses APP_ROLE and TRUST_PROXY helpers and rejects invalid values', () => {
-      for (const [raw, expected] of [
-        [undefined, 'all'],
-        ['', 'all'],
-        ['all', 'all'],
-        ['api', 'api'],
-        ['worker', 'worker'],
-      ] as const) {
-        expect(parseAppRole(raw)).toBe(expected);
-      }
-      expect(() => parseAppRole('scheduler')).toThrow(/APP_ROLE/);
+    it('parses TRUST_PROXY helper and rejects invalid values', () => {
       for (const [raw, expected] of [
         [undefined, false],
         ['', false],

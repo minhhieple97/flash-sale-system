@@ -1,5 +1,5 @@
 import type { ReactElement, ReactNode } from 'react';
-import type { Tone } from '../types/tone.types';
+import type { Tone } from '../types/common.types';
 
 interface StatusPillProps {
   tone: Tone;

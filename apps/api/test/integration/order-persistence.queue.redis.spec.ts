@@ -46,7 +46,7 @@ describe('OrderPersistenceService against the real order-persistence queue', () 
           provide: SaleLedgerRepository,
           useValue: {
             releaseReservation,
-            listReservations: async (): Promise<ReservationRef[]> => [],
+            listPendingReservations: async (): Promise<ReservationRef[]> => [],
           },
         },
       ],

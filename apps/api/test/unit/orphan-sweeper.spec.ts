@@ -1,5 +1,7 @@
 import { Logger } from '@nestjs/common';
 import type { JobState } from 'bullmq';
+import type { ClockService } from '../../src/common/providers/clock.service';
+import { ORPHAN_GRACE_MS } from '../../src/modules/orders/constants/orders.constants';
 import { OrphanSweeper } from '../../src/modules/orders/services/orphan-sweeper.service';
 import type { ReservationRef, SaleLedgerRepository } from '../../src/modules/sale-ledger';
 import {
@@ -9,6 +11,7 @@ import {
 } from '../support/order-persistence.mocks';
 import { userIdOf } from '../support/user-id.fixtures';
 
+const NOW_MS = 1_800_000_000_000;
 const COMPENSATION_JOB_ID = `compensate-${REF.orderId}`;
 const NONE_COMPENSATED = { CONFIRMED: 0, RELEASED: 0, NOT_RESERVED: 0 };
 
@@ -18,8 +21,13 @@ interface SweeperMocks extends PersistenceServiceMocks {
 
 function buildSweeper(refs: ReservationRef[] = [REF]): SweeperMocks {
   const mocks = buildPersistenceService();
-  mocks.cache.listReservations.mockResolvedValue(refs);
-  const sweeper = new OrphanSweeper(mocks.service, mocks.cache as unknown as SaleLedgerRepository);
+  mocks.cache.listPendingReservations.mockResolvedValue(refs);
+  const clock = { nowMs: () => NOW_MS } as ClockService;
+  const sweeper = new OrphanSweeper(
+    mocks.service,
+    mocks.cache as unknown as SaleLedgerRepository,
+    clock,
+  );
   return { ...mocks, sweeper };
 }
 
@@ -35,45 +43,29 @@ describe('OrphanSweeper', () => {
     jest.restoreAllMocks();
   });
 
-  it('releases a RESERVED entry with no job at the boot threshold and counts it as RELEASED', async () => {
+  it('sweeps all jobless pending entries immediately when graceMs is 0 (boot sweep)', async () => {
     const mocks = buildSweeper();
 
-    const summary = await mocks.sweeper.sweepOrphans(REF.saleId, 'BOOT');
+    const summary = await mocks.sweeper.sweepOrphans(REF.saleId, 0);
 
-    expect(mocks.cache.listReservations).toHaveBeenCalledWith(REF.saleId);
+    expect(mocks.cache.listPendingReservations).toHaveBeenCalledWith(REF.saleId, undefined);
     expect(mocks.cache.releaseReservation).toHaveBeenCalledWith(REF);
     expect(summary).toEqual({
       pending: 0,
-      candidates: 0,
       compensated: { ...NONE_COMPENSATED, RELEASED: 1 },
     });
   });
 
-  it('leaves a jobless entry untouched on the first interval sweep and releases it on the second', async () => {
+  it('passes nowMs - ORPHAN_GRACE_MS as the ZSET cutoff by default', async () => {
     const mocks = buildSweeper();
 
-    const first = await mocks.sweeper.sweepOrphans(REF.saleId, 'INTERVAL');
-    const releasesAfterFirst = mocks.cache.releaseReservation.mock.calls.length;
-    const second = await mocks.sweeper.sweepOrphans(REF.saleId, 'INTERVAL');
+    const summary = await mocks.sweeper.sweepOrphans(REF.saleId);
 
-    expect(first).toEqual({ pending: 0, candidates: 1, compensated: NONE_COMPENSATED });
-    expect(releasesAfterFirst).toBe(0);
-    expect(second.compensated.RELEASED).toBe(1);
-    expect(mocks.cache.releaseReservation).toHaveBeenCalledWith(REF);
-  });
-
-  it('keeps an entry whose persistence job appears between two interval sweeps', async () => {
-    const mocks = buildSweeper();
-
-    await mocks.sweeper.sweepOrphans(REF.saleId, 'INTERVAL');
-    withJobStates(mocks, { [REF.orderId]: 'waiting' });
-    const second = await mocks.sweeper.sweepOrphans(REF.saleId, 'INTERVAL');
-    withJobStates(mocks, {});
-    const third = await mocks.sweeper.sweepOrphans(REF.saleId, 'INTERVAL');
-
-    expect(second).toEqual({ pending: 1, candidates: 0, compensated: NONE_COMPENSATED });
-    expect(third).toEqual({ pending: 0, candidates: 1, compensated: NONE_COMPENSATED });
-    expect(mocks.cache.releaseReservation).not.toHaveBeenCalled();
+    expect(mocks.cache.listPendingReservations).toHaveBeenCalledWith(
+      REF.saleId,
+      NOW_MS - ORPHAN_GRACE_MS,
+    );
+    expect(summary.compensated.RELEASED).toBe(1);
   });
 
   it.each(['waiting', 'delayed', 'active', 'prioritized', 'waiting-children'] as const)(
@@ -82,9 +74,9 @@ describe('OrphanSweeper', () => {
       const mocks = buildSweeper();
       withJobStates(mocks, { [REF.orderId]: state });
 
-      const summary = await mocks.sweeper.sweepOrphans(REF.saleId, 'BOOT');
+      const summary = await mocks.sweeper.sweepOrphans(REF.saleId, 0);
 
-      expect(summary).toEqual({ pending: 1, candidates: 0, compensated: NONE_COMPENSATED });
+      expect(summary).toEqual({ pending: 1, compensated: NONE_COMPENSATED });
       expect(mocks.orders.findConfirmedOrderId).not.toHaveBeenCalled();
     },
   );
@@ -93,7 +85,7 @@ describe('OrphanSweeper', () => {
     const mocks = buildSweeper();
     withJobStates(mocks, { [REF.orderId]: 'failed', [COMPENSATION_JOB_ID]: 'delayed' });
 
-    const summary = await mocks.sweeper.sweepOrphans(REF.saleId, 'BOOT');
+    const summary = await mocks.sweeper.sweepOrphans(REF.saleId, 0);
 
     expect(summary.pending).toBe(1);
     expect(mocks.cache.releaseReservation).not.toHaveBeenCalled();
@@ -106,7 +98,7 @@ describe('OrphanSweeper', () => {
     const mocks = buildSweeper();
     withJobStates(mocks, states);
 
-    const summary = await mocks.sweeper.sweepOrphans(REF.saleId, 'BOOT');
+    const summary = await mocks.sweeper.sweepOrphans(REF.saleId, 0);
 
     expect(mocks.orders.findConfirmedOrderId).toHaveBeenCalledWith(REF.saleId, REF.userId);
     expect(summary.compensated.RELEASED).toBe(1);
@@ -116,7 +108,7 @@ describe('OrphanSweeper', () => {
     const mocks = buildSweeper();
     mocks.orders.findConfirmedOrderId.mockResolvedValue(REF.orderId);
 
-    const summary = await mocks.sweeper.sweepOrphans(REF.saleId, 'BOOT');
+    const summary = await mocks.sweeper.sweepOrphans(REF.saleId, 0);
 
     expect(mocks.cache.confirmReservation).toHaveBeenCalledWith(REF, REF.orderId);
     expect(mocks.cache.releaseReservation).not.toHaveBeenCalled();
@@ -132,36 +124,33 @@ describe('OrphanSweeper', () => {
       .mockResolvedValueOnce('RELEASED')
       .mockResolvedValueOnce('NOT_RESERVED');
 
-    const summary = await mocks.sweeper.sweepOrphans(REF.saleId, 'BOOT');
+    const summary = await mocks.sweeper.sweepOrphans(REF.saleId, 0);
 
     expect(summary).toEqual({
       pending: 1,
-      candidates: 0,
       compensated: { CONFIRMED: 0, RELEASED: 1, NOT_RESERVED: 1 },
     });
   });
 
   it('logs one warn with the summary when it compensated anything, and nothing otherwise', async () => {
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const empty = buildSweeper([]);
+    await empty.sweeper.sweepOrphans(REF.saleId);
+    expect(warn).not.toHaveBeenCalled();
+
     const mocks = buildSweeper();
+    await mocks.sweeper.sweepOrphans(REF.saleId);
 
-    await mocks.sweeper.sweepOrphans(REF.saleId, 'INTERVAL');
-    const warnsAfterFirst = warn.mock.calls.length;
-    await mocks.sweeper.sweepOrphans(REF.saleId, 'INTERVAL');
-
-    expect(warnsAfterFirst).toBe(0);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0][0])).toMatch(/RELEASED.*1/);
   });
 
-  it('rejects when compensation cannot reach PostgreSQL and keeps the previous strikes', async () => {
+  it('propagates PostgreSQL errors and retries cleanly on the next sweep', async () => {
     const mocks = buildSweeper();
-    await mocks.sweeper.sweepOrphans(REF.saleId, 'INTERVAL');
     mocks.orders.findConfirmedOrderId.mockRejectedValueOnce(new Error('db down'));
 
-    const failed = mocks.sweeper.sweepOrphans(REF.saleId, 'INTERVAL');
-    await expect(failed).rejects.toThrow('db down');
-    const retried = await mocks.sweeper.sweepOrphans(REF.saleId, 'INTERVAL');
+    await expect(mocks.sweeper.sweepOrphans(REF.saleId)).rejects.toThrow('db down');
+    const retried = await mocks.sweeper.sweepOrphans(REF.saleId);
 
     expect(retried.compensated.RELEASED).toBe(1);
   });

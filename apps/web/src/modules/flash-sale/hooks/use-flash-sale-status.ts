@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { requestJson } from '@/shared/api/http-client';
 import { type PollTask, usePolling } from '@/shared/hooks/use-polling';
-import type { ApiError } from '@/shared/types/api.types';
-import { fetchCurrentFlashSale } from '../api/flash-sale.api';
-import { STATUS_POLL_INTERVAL_MS } from '../constants/flash-sale.constants';
+import type { ApiError } from '@/shared/types/common.types';
+import {
+  CURRENT_FLASH_SALE_PATH,
+  STATUS_POLL_INTERVAL_MS,
+} from '../constants/flash-sale.constants';
 import type {
   FlashSaleFeed,
   FlashSaleStatus,
@@ -23,7 +26,10 @@ interface SyncFlashSaleParams {
 }
 
 async function syncFlashSale(params: SyncFlashSaleParams): Promise<void> {
-  const result = await fetchCurrentFlashSale(params.signal);
+  const result = await requestJson<FlashSaleStatus>({
+    path: CURRENT_FLASH_SALE_PATH,
+    signal: params.signal,
+  });
   if (params.signal.aborted || !params.isActive()) return;
   if (result.ok) params.onSuccess(result.data);
   else params.onFailure(result.error);

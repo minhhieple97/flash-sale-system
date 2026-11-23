@@ -14,7 +14,7 @@
     }
   },
   "scripts": {
-    "lint": "biome check --error-on-warnings . && node scripts/arch-check.mjs",
+    "lint": "biome check --error-on-warnings .",
     "format": "biome format --write .",
     "test": "pnpm -r test",
     "test:scripts": "node --test scripts/*.test.mjs",

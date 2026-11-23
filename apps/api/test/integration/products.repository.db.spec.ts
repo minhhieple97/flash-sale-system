@@ -5,7 +5,7 @@ import { DataSource } from 'typeorm';
 import { AppConfigModule } from '../../src/config/app-config.module';
 import { DatabaseModule } from '../../src/infrastructure/database/database.module';
 import { ProductEntity } from '../../src/modules/products/entities/product.entity';
-import type { Product } from '../../src/modules/products/interfaces/product.interface';
+import type { Product } from '../../src/modules/products/products.types';
 import { ProductsRepository } from '../../src/modules/products/repositories/products.repository';
 
 describe('ProductsRepository', () => {

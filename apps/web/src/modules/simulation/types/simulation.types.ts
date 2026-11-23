@@ -1,4 +1,4 @@
-import type { ApiError } from '@/shared/types/api.types';
+import type { ApiError } from '@/shared/types/common.types';
 
 export type ScenarioId = 'active' | 'high-scarcity' | 'upcoming' | 'ended';
 

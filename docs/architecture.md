@@ -1,142 +1,224 @@
 [← README](../README.md)
 
-# Architecture
+# Architecture, Fault Tolerance, and Scaling
 
-This page names the components, says which one owns which data, and shows how the code is layered. The request path is in [purchase-flow.md](purchase-flow.md), and what happens when a part fails is in [fault-tolerance.md](fault-tolerance.md).
+This document covers the system architecture, data ownership, Redis ledger scripts, end-to-end purchase lifecycle, fault-tolerance guarantees, key design trade-offs, and how the design scales to 10x-100x production load.
 
-## System context
+## 1. System Context and Components
 
 ```mermaid
 flowchart LR
     browser["Browser<br/>React storefront"]
-    subgraph compose["Docker Compose, ports published on 127.0.0.1"]
-        nginx["web: nginx<br/>static build, /api/ and =/health proxy<br/>keepalive 256 (10k reqs), gzip, XFF=$remote_addr"]
-        subgraph api["api: APP_ROLE=all (or split api + worker)"]
-            http["NestJS on Fastify<br/>/api/v1, /health, /metrics"]
-            worker["BullMQ worker<br/>concurrency 20"]
-            maint["Ledger maintenance<br/>boot heal, 30 s tick + Redis lease"]
+    subgraph compose["Docker Compose (ports bound to 127.0.0.1)"]
+        nginx["web: nginx<br/>SPA build, /api/ & =/health proxy<br/>keepalive 256 (10k reqs), gzip, XFF=$remote_addr"]
+        subgraph api["api (Node 24 + NestJS on Fastify)"]
+            http["HTTP API<br/>/api/v1, /health, /metrics"]
+            worker["BullMQ Worker<br/>concurrency 20"]
+            maint["Ledger Maintenance<br/>boot heal, 30 s tick + Redis lease"]
         end
-        redis[("Redis 7, AOF everysec<br/>sale ledger, lease and order queue")]
+        redis[("Redis 7 (AOF everysec)<br/>sale ledger, pending ZSET, lease & queue")]
         pg[("PostgreSQL 16<br/>products, flash_sales, orders")]
-        k6["k6 1.8.3<br/>compose profile: stress"]
+        k6["k6 1.8.3<br/>stress profile"]
     end
     browser -->|"/"| nginx
     nginx -->|"/api/, =/health"| http
     http -->|"Lua scripts, queue.add, reset lease"| redis
     http -->|"product cache, missing-ledger fallback, reset SQL"| pg
-    worker -->|"take jobs, confirm"| redis
-    worker -->|"one transaction per order"| pg
-    maint -->|"lease lock, restore batches, sweep"| redis
-    maint -->|"keyset confirmed batches"| pg
+    worker -->|"consume jobs, confirm/rollback"| redis
+    worker -->|"ACID order tx"| pg
+    maint -->|"lease lock, chunked restore, ZSET sweep"| redis
+    maint -->|"keyset confirmed batches (1k)"| pg
     k6 -.->|"load"| http
 ```
 
-| Component | Job | State it owns | When it is down |
+| Component | Responsibility | State Owned | Failure Impact |
 | --- | --- | --- | --- |
-| nginx | Serves the React build, pools `keepalive 256` (`keepalive_requests 10000`, HTTP/1.1) to `api:3000` with 10 s Docker DNS re-resolution, overwrites `X-Forwarded-For` and `X-Real-IP` with `$remote_addr`, adds gzip, sets security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Content-Security-Policy`) on static `location /` responses without duplicating API headers, enforces 5 s connect / 15 s read+send proxy timeouts, and proxies `/api/` and exact `/health` (never `/metrics`) so the browser uses relative URLs and the API needs no CORS | None | The storefront is unreachable. The API still answers on its own port (single-node mode) |
-| API (HTTP) | Validates input, enforces optional per-IP `RateLimitGuard` (keyed by `request.ip` under `TRUST_PROXY`, capped at 50,000 buckets with O(1) eviction), `ADMIN_API_KEY`, and `Content-Type: application/json` (`415` on admin reset), runs the purchase gate, answers `200`, `202`, `400`, `401`, `404`, `409`, `410`, `413`, `415`, `422`, `429` or `503`, serves status (`Cache-Control: no-store`, PG-checked `503` vs `404` on `NOT_CONFIGURED`), product (`Cache-Control: public, max-age=60, stale-while-revalidate=300`), lookup (`Cache-Control: no-store`), `/health`, and `/metrics` | 60 s singleflight product micro-cache (+ stale `lastKnownProduct` with 5 s DB retry backoff), 200 ms status snapshot cache (`FOUND` only), optional in-memory rate-limit buckets, per-process metrics counters | Purchases stop. Reservations already made stay in Redis, and their jobs stay queued |
-| Worker | Turns a reservation into a PostgreSQL order and confirms it in Redis | None | Jobs wait in the queue. Buyers keep getting 202 until stock runs out |
-| Ledger maintenance | At boot (all roles; 50 × 100 ms lease retry, skips with warning if held): hydrates Redis, fences `queue.resume()` under the lease, and sweeps per `APP_ROLE` (`all`: threshold 1, `api`: skipped, `worker`: threshold 2). Every 30 s (`all` or `worker`; 1-shot lease): finishes an in-memory pending reset, restores lost Redis keys in 1,000-row batches from PostgreSQL, fences `queue.resume()`, and releases orphaned reservations (threshold 2) | Orphan strike counts and an in-memory pending reset plan | Self-healing pauses. Nothing breaks until something else fails |
-| Redis | Decides who gets a unit, holds the order queue and maintenance lease | Sale config, stock counter, buyer entries, maintenance lock, queue | Every route answers 503 within about 2 s. See [fault-tolerance.md](fault-tolerance.md) |
-| PostgreSQL | Durable orders, and the last guard against oversell and duplicates | `products`, `flash_sales`, `orders` | Purchases still answer 202, intact-ledger lookups answer `RESERVED`/`CONFIRMED`/`NONE` from Redis, and warm featured-product caches serve `lastKnownProduct` with a 5 s retry backoff (cold product cache and missing-ledger fallback answer `503`). Orders land when PostgreSQL returns |
+| **nginx (`web`)** | Serves React static build; proxies `/api/` and `=/health` (never `/metrics`) over `keepalive 256` (`keepalive_requests 10000`, HTTP/1.1) with 10 s DNS re-resolution; overwrites `X-Forwarded-For` / `X-Real-IP` with `$remote_addr`; emits CSP + security headers on static `location /` without duplicating API headers | None | Storefront unreachable; API still serves directly on `:3000` |
+| **API (HTTP)** | Input validation, optional per-IP `RateLimitGuard` (`TRUST_PROXY`), `ADMIN_API_KEY`, `Content-Type: application/json` (`415` on admin reset), atomic purchase gate, status/product/lookup routes, `/health`, `/metrics` | 60 s singleflight product cache (+ stale fallback with 5 s DB retry backoff), 200 ms `FOUND`-only status snapshot cache, optional in-memory rate-limit buckets, Prometheus counters | New purchases stop; existing Redis reservations & BullMQ jobs persist |
+| **BullMQ Worker** | Persists each `RESERVED` unit into PostgreSQL in one ACID transaction and confirms or adopts the Redis slot | None | Jobs accumulate in Redis; buyers still get `202` until stock hits `0` |
+| **Ledger Maintenance** | On boot (up to `50 × 100 ms` lease retry) and every 30 s (1-shot lease): restores missing Redis keys in 1,000-row batches from PostgreSQL, resumes paused queue under lease, and compensates expired orphan reservations via Redis `ZSET` | Stateless (`activeRun` promise for graceful shutdown only) | Self-healing pauses; steady-state requests are unaffected |
+| **Redis 7 (AOF)** | Fast decision engine, pending-reservation index, distributed maintenance lease, BullMQ broker | Sale config, stock counter, buyer hash, pending ZSET, maintenance lock, job queues | API fails fast (`503 TEMPORARY_FAILURE`) within ~2 s; AOF replays on restart |
+| **PostgreSQL 16** | System of record for durable orders and final concurrency/stock guards | `products`, `flash_sales`, `orders` | Purchases still answer `202`, intact-ledger lookups answer from Redis, warm product cache serves stale copy; orders persist once PG recovers |
 
-By default (`APP_ROLE=all`), the API and the worker share one Node process. Setting `APP_ROLE=api` and `APP_ROLE=worker` (configured in `docker-compose.scaled.yml`) splits HTTP replicas from the background worker and maintenance loop; see [scaling.md](scaling.md).
+## 2. Data Ownership and Two-Layer Invariants
 
-## Who owns which data
+The core principle is **Redis decides, PostgreSQL records**. Under a flash sale, most requests are refusals (`410 SOLD_OUT`, `409 ALREADY_PURCHASED`). Answering on Redis after a single Lua script + BullMQ enqueue keeps hot-path latency independent of database row locks.
 
-The central rule is that **Redis decides and PostgreSQL records**. A purchase answers after one Lua call and one enqueue, and never waits for a database write.
+Because Redis (`appendfsync everysec`) can lose up to ~1 s of writes on a sudden crash or flush, every invariant has both a fast Redis check and a final PostgreSQL constraint:
 
-| Data | Authoritative store | Why |
+| Invariant | Fast Check (Redis) | Final Check (PostgreSQL) |
 | --- | --- | --- |
-| Who holds a unit right now, and units left | Redis | One script decides, and Redis runs one script at a time |
-| Confirmed orders | PostgreSQL | Durable, constrained, queryable |
-| `remaining_stock` | PostgreSQL | The transaction that inserts an order also decrements it, so it equals `total_stock` minus the orders |
-| Sale window and total stock | PostgreSQL (`flash_sales`), copied to Redis | The script reads the window from Redis, so a purchase touches one store |
-| Order queue | Redis (BullMQ) | The enqueue is one more command on a connection that is already open |
+| **No overselling** | `attemptPurchase` Lua decrements `stock` only when `stock > 0` | `UPDATE flash_sales SET remaining_stock = remaining_stock - 1 WHERE remaining_stock > 0` inside the order TX; `CHECK (remaining_stock >= 0 AND remaining_stock <= total_stock)` |
+| **One item per buyer** | Normalized `userId` (`a-z0-9._@+-`, 3–128 chars) rejected if already in `:users` | `UNIQUE (flash_sale_id, user_id)` on `orders` |
+| **Every `202` resolves** | Entry stores `RESERVED:<orderId>` and `:pending` ZSET records `(nowMs, userId)`; all later mutations CAS on `orderId` | Worker retries 5 min; compensation queries PostgreSQL before releasing; 30 s ZSET sweep compensates jobless orphans |
 
-Redis can lose data. A crash with `appendfsync everysec` loses up to about a second of writes, and `FLUSHALL` loses everything. So PostgreSQL carries its own guards, and the system rebuilds Redis from PostgreSQL. Each guarantee has a fast check and a final check.
+## 3. Redis Keys and Idempotent Lua Scripts
 
-| Guarantee | Fast check (Redis) | Final check (PostgreSQL) |
-| --- | --- | --- |
-| No oversell | The script decrements stock only while it is above 0 | `UPDATE flash_sales SET remaining_stock = remaining_stock - 1 WHERE remaining_stock > 0` inside the order transaction. Zero updated rows rolls the order back |
-| One unit per buyer | The script rejects a buyer who already has an entry. Ids are trimmed and lowercased first | `UNIQUE (flash_sale_id, user_id)` on `orders` |
-| Every 202 ends as an order or a released unit | Every write after the reservation is fenced by the order id in the entry | A compensation job asks PostgreSQL whether the order committed, then confirms or releases. A 30 s sweep does the same for reservations with no job |
-
-## Redis keys and scripts
-
-One module, `modules/sale-ledger`, owns every key and every script (`SaleLedgerRepository` and `SaleLedgerLeaseRepository`). Nothing else knows a key name or a value format. All four sale keys embed `{saleId}` as a Redis Cluster hash tag so multi-key Lua scripts and `MULTI` pipelines target one hash slot.
+A single leaf module, `apps/api/src/modules/sale-ledger/`, owns every key pattern, wire format, and Lua script (enforced by `sale-ledger.boundary.spec.ts`). All sale keys share the `{saleId}` Redis Cluster hash tag so multi-key scripts and `MULTI` pipelines target one hash slot.
 
 | Key | Type | Content |
 | --- | --- | --- |
-| `flash_sale:{saleId}:config` | hash | `saleId`, `totalStock`, `startTimeMs`, `endTimeMs` |
-| `flash_sale:{saleId}:stock` | string | Units left, an integer |
-| `flash_sale:{saleId}:users` | hash | `userId` to `RESERVED:<orderId>` or `CONFIRMED:<orderId>` |
-| `flash_sale:{saleId}:maintenance_lock` | string | UUID lease token (`PX 25000 NX`) held during boot hydration, maintenance ticks, and admin resets |
-| `bull:order-persistence:*` | BullMQ | Persistence and compensation jobs |
+| `flash_sale:{saleId}:config` | Hash | `saleId`, `totalStock`, `startTimeMs`, `endTimeMs` |
+| `flash_sale:{saleId}:stock` | String | Remaining units (integer) |
+| `flash_sale:{saleId}:users` | Hash | `userId` → `RESERVED:<orderId>` or `CONFIRMED:<orderId>` |
+| `flash_sale:{saleId}:pending` | ZSET | Active `RESERVED` `userId` members scored by reservation timestamp (`nowMs`), enabling `O(pending)` orphan sweeping |
+| `flash_sale:{saleId}:maintenance_lock` | String | UUID lease token (`SET ... PX 25000 NX`) serializing boot hydration, maintenance ticks, and admin resets |
+| `bull:order-persistence:*` | BullMQ | Order persistence and compensation job queues |
 
-Every entry in the `users` hash holds exactly one unit, `RESERVED` or `CONFIRMED`. So `stock = totalStock - HLEN(users)` always holds, and the restore script relies on it.
+Invariant: every entry in `:users` accounts for exactly one unit (`RESERVED` or `CONFIRMED`), so `stock = totalStock - HLEN(users)` always holds.
 
-| Script | What it does | Called by |
-| --- | --- | --- |
-| `attemptPurchase` | The purchase gate: resend, window, duplicate, stock, then `DECR` and `HSET RESERVED` | Checkout, for every purchase |
-| `confirmPurchase` | Writes `CONFIRMED:<id>` only while the entry is `RESERVED:<orderId>` (or already that `CONFIRMED` value) | The worker after the commit, and compensation |
-| `rollbackPurchase` | Deletes the entry and returns the unit, only while the entry is `RESERVED:<orderId>`. A missing stock key stays missing | Compensation, and the enqueue-failure path |
-| `adoptOrder` | When PostgreSQL holds an order whose Redis entry is gone, writes `CONFIRMED` and takes one unit as long as the stock key exists (even when `stock <= 0`, clamping displayed `remainingStock >= 0` in the codec) and the entry is absent | `confirmCommitted`, when `confirmPurchase` finds nothing to confirm |
-| `restoreConfirmedBatch` | Writes a batch (up to 1,000) of `CONFIRMED` entries with `HSETNX` without overwriting existing entries | Boot and the maintenance tick, via keyset pagination |
-| `restoreSale` | Writes only what is missing: the config hash, any trailing `CONFIRMED` entries (`HSETNX`), and the stock key as `totalStock - HLEN(users)` | Boot, and the maintenance tick |
-| `releaseLock` | Deletes `maintenance_lock` only if its value equals the caller's `ownerToken` | Boot, maintenance tick, and admin reset `finally` cleanup |
+| Lua Script | Behavior |
+| --- | --- |
+| `attemptPurchase` | Atomic gate: (1) resend with same `orderId` returns `RESERVED` + `ZADD NX` on `:pending`; (2) checks `:config` & `:stock` exist (`SALE_NOT_CONFIGURED`); (3) checks inclusive window `[startTimeMs, endTimeMs]` (`SALE_UPCOMING` / `SALE_ENDED`); (4) checks duplicate in `:users` (`ALREADY_PURCHASED`); (5) checks `stock > 0` (`SOLD_OUT`); (6) `DECR stock`, `HSET users RESERVED:<orderId>`, `ZADD pending nowMs userId` |
+| `confirmPurchase` | CAS transition: sets `CONFIRMED:<orderId>` and `ZREM pending userId` only if current slot is `RESERVED:<orderId>` (or already that `CONFIRMED` value) |
+| `rollbackPurchase` | CAS release: `HDEL users`, `ZREM pending`, and `INCR stock` (if stock key exists) only if current slot is `RESERVED:<orderId>` |
+| `adoptOrder` | Re-attaches a PostgreSQL-committed order when its Redis entry is missing and `:stock` exists (even at `stock <= 0`, clamping displayed `remainingStock >= 0`), writing `CONFIRMED:<orderId>` and decrementing stock |
+| `restoreConfirmedBatch` | Writes up to 1,000 `CONFIRMED:<orderId>` rows via `HSETNX` without overwriting live reservations |
+| `restoreSale` | Writes missing `:config`, any trailing `CONFIRMED` entries (`HSETNX`), and restores missing `:stock` as `totalStock - HLEN(users)` |
+| `releaseLock` | Deletes `maintenance_lock` only if stored value matches caller's `ownerToken` |
 
-The scripts are registered once on the Redis client. A spec resends every registered script and requires the same state and the declared resend replies (3 repeat the same reply; 4 idempotent mutations return no-op `0`), so a script that is not safe to repeat fails the build.
+`flash-sale-scripts.idempotency.redis.spec.ts` automatically resends every script in `SALE_LEDGER_SCRIPTS` and asserts identical final state and declared resend replies.
 
-## PostgreSQL schema
+## 4. PostgreSQL Schema
 
-The API creates the tables on boot with `CREATE TABLE IF NOT EXISTS`, inside a transaction that holds a PostgreSQL advisory lock. There is no migration tool, because the schema has three tables and one version.
+Tables are created idempotently on boot (`CREATE TABLE IF NOT EXISTS`) inside a transaction protected by a PostgreSQL advisory lock.
 
 ```mermaid
 erDiagram
-    products ||--o{ flash_sales : "is sold in"
+    products ||--o{ flash_sales : "sold in"
     flash_sales ||--o{ orders : "has"
-    products ||--o{ orders : "is ordered as"
+    products ||--o{ orders : "ordered as"
     products {
         uuid id PK
         varchar sku UK
         varchar name
-        int original_price_cents "CHECK above 0"
-        int sale_price_cents "CHECK above 0"
+        int original_price_cents "CHECK > 0"
+        int sale_price_cents "CHECK > 0"
     }
     flash_sales {
         uuid id PK
         uuid product_id FK
-        int total_stock "CHECK 0 or more"
-        int remaining_stock "CHECK 0 to total_stock"
+        int total_stock "CHECK >= 0"
+        int remaining_stock "CHECK 0..total_stock"
         timestamptz starts_at
-        timestamptz ends_at "CHECK after starts_at"
+        timestamptz ends_at "CHECK > starts_at"
     }
     orders {
         uuid id PK
         uuid flash_sale_id FK
         uuid product_id FK
-        varchar user_id "UNIQUE with flash_sale_id"
+        varchar user_id "UNIQUE (flash_sale_id, user_id)"
         varchar status "default CONFIRMED"
     }
 ```
 
-The two `CHECK` constraints on `flash_sales` mean a bug cannot push stock below zero or above the total. The unique key on `(flash_sale_id, user_id)` means a second order for one buyer cannot commit. Two indexes (`idx_orders_sale_status_created` on `orders (flash_sale_id, status, created_at, id)` and `idx_flash_sales_product_id` on `flash_sales (product_id)`) support keyset-paginated hydration batches (`LIMIT 1000`) and product-to-sale joins.
+Indexes: `idx_orders_sale_status_created` on `orders (flash_sale_id, status, created_at, id)` for keyset-paginated 1,000-row restore queries, and `idx_flash_sales_product_id` on `flash_sales (product_id)`.
 
-## Backend modules
+## 5. Purchase Flow
 
-The API is NestJS 11 on Fastify (`loadDotEnvFiles()` runs before `parseAppRole`/`parseTrustProxy`; `AppModule.forRole(APP_ROLE)` splits `ProductsCoreModule`, `FlashSalesCoreModule`, and `OrdersCoreModule` so `worker` mounts zero business controllers and `api` registers no `BullModule` consumer queue/processor, keeps `HealthModule` and `MetricsModule` on all roles, keeps `LedgerMaintenanceService` for boot hydration on `api` while disabling ticks and boot sweeps, and runs the BullMQ worker + scheduled maintenance on `all` and `worker`). Each domain module lives in `apps/api/src/modules/<domain>/`.
+```mermaid
+sequenceDiagram
+    Browser->>API: POST /api/v1/checkout/purchase {userId}
+    API->>Redis: attemptPurchase (window, dup, stock, DECR, HSET RESERVED, ZADD pending)
+    Redis-->>API: RESERVED or typed refusal (409 / 410 / 422)
+    API->>Redis: queue.add persist-order (jobId = orderId)
+    API-->>Browser: 202 {code: RESERVED, orderId}
+    Worker->>PostgreSQL: TX: INSERT order ON CONFLICT DO NOTHING + UPDATE remaining_stock > 0
+    Worker->>Redis: confirmPurchase CAS (RESERVED -> CONFIRMED, ZREM pending)
+    Browser->>API: GET /api/v1/orders/user/:userId (1 s poll, max 30)
+    API-->>Browser: RESERVED -> CONFIRMED
+```
+
+1. **Normalization:** `userId` is trimmed, lowercased, and validated (`^[a-z0-9._@+-]{3,128}$`) so `"  ALICE@Example.com "` and `"alice@example.com"` map to the same buyer.
+2. **Typed Outcomes (No Hot-Path Throws):** `CheckoutService` returns a discriminated union mapped via `Record<PurchaseOutcome, HttpStatus>` — expected refusals (`SOLD_OUT`, `ALREADY_PURCHASED`, `SALE_UPCOMING`, `SALE_ENDED`) never allocate V8 stack traces.
+3. **Enqueue Safety:** If `queue.add` fails, `OrderPersistenceProducer` inspects Redis by `jobId = orderId`. If the job was actually stored (lost reply), the `202` stands; otherwise it runs `rollbackPurchase` and answers `503`.
+4. **Worker Persistence:** `OrdersRepository.persistOrder` checks if the reservation is live, inserts the order (`ON CONFLICT DO NOTHING`) and decrements `remaining_stock` (`WHERE remaining_stock > 0`) in one transaction, then calls `confirmPurchase` (or `adoptOrder` if Redis lost the slot after PG committed).
+5. **Client Confirmation:** The React storefront computes clock offset from `serverTime`, schedules one boundary `setTimeout` at `startsAt`/`endsAt` (zero idle re-renders), and polls `/orders/user/:userId` every 1 s (up to 30 attempts) keyed by `[userId, orderId]`.
+
+## 6. Fault Tolerance and Recovery
+
+```mermaid
+flowchart TD
+    job["persist-order job fails"] --> kind{"error class?"}
+    kind -- "transient DB / network" --> retry["BullMQ retry every 2 s<br/>150 attempts (~5 min)"]
+    retry -- "succeeds" --> ok(["CONFIRMED + ZREM pending"])
+    retry -- "exhausted (150th)" --> comp
+    kind -- "OrderPersistenceRejectedError<br/>(stock=0 / missing sale)" --> comp
+    kind -- "stalled twice" --> comp
+    comp["enqueue compensate-orderId<br/>8 attempts, exponential from 1 s"] --> pg{"Order exists in PG?"}
+    pg -- "yes" --> adopt["confirmPurchase / adoptOrder<br/>(retries if ledger !isIntact)"]
+    pg -- "no" --> rel["rollbackPurchase CAS<br/>HDEL users + ZREM pending + INCR stock"]
+    comp -. "8 attempts fail" .-> sweep["next 30 s ZSET sweep retries"]
+```
+
+| Fault Scenario | Buyer Experience | Recovery Mechanism | Recovery Bound |
+| --- | --- | --- | --- |
+| **PostgreSQL outage (< 5 min)** | Purchases keep returning `202`; intact-ledger lookups answer from Redis; warm product cache serves stale copy (5 s backoff) | Pool timeouts (`2 s` connect, `5 s` statement); BullMQ retries every `2 s` × `150` attempts | Confirms within `2 s` of PG recovery (verified by 45 s `pg-blip` stress test) |
+| **PostgreSQL outage (> 5 min) or deterministic reject** | `202` withdrawn; lookup settles to `NONE` | `OrderPersistenceRejectedError` skips retries; compensation checks PG first, then releases slot via `rollbackPurchase` | Immediate (reject) or ~5 min (outage) |
+| **Redis unreachable** | Immediate `503 TEMPORARY_FAILURE` (in-flight commands timeout in `2 s`) | Hot-path client disables offline queue (`enableOfflineQueue: false`, `maxRetriesPerRequest: 1`); worker keeps blocking defaults | Immediate on reconnect |
+| **Crash between Lua gate and `queue.add` (orphan)** | `503` on that call; retry gets `409` until swept | Stateless `OrphanSweeper` queries `ZRANGEBYSCORE flash_sale:{saleId}:pending -inf (nowMs - 30000)` in `O(pending)` time, checks BullMQ for a pending persist/compensate job, and compensates jobless entries (`graceMs = 0` on boot) | 30–60 s (immediate at boot) |
+| **Redis total data loss (`FLUSHALL`)** | Purchases & status answer `503` (never false `404` while PG holds the sale) | 30 s maintenance tick acquires `maintenance_lock`, restores `CONFIRMED` orders in 1,000-row keyset batches (`restoreConfirmedBatch` + `restoreSale`), and resumes queue under lease | <= 30 s (8 s observed live) |
+| **Stock key lost while config remains** | `503 TEMPORARY_FAILURE` (never false `SOLD_OUT`) | `attemptPurchase` returns `SALE_NOT_CONFIGURED`; non-`FOUND` status reads bypass micro-cache; tick restores `stock = totalStock - HLEN(users)` | <= 30 s |
+| **Admin reset failure mid-flight** | Caller gets error; status/purchases return `503` (never old sale) | Reset acquires `maintenance_lock`, pauses/drains queue, runs `invalidateState` (`DEL` config/stock/users/pending) **before** PG commits, updates PG in one SQL statement, then `replaceState`; if `replaceState` fails, next tick heals Redis from PG via `restoreIfLost` | <= 30 s |
+| **SIGTERM during load** | In-flight requests complete cleanly | Maintenance timer stops & awaits `activeRun`, BullMQ worker finishes active jobs, queues close, Redis disconnects last | Immediate |
+
+**Known Gaps (Accepted Explicitly):**
+- Losing *only* `:users` while `:config` and `:stock` remain intact is not auto-detected by the `EXISTS config stock` check.
+- `appendfsync everysec` risks losing up to ~1 s of unpersisted Redis reservations on sudden host power loss; PG constraints prevent oversell/duplicates, and lost unconfirmed `202`s revert to `NONE`.
+- Admin reset is a demo/test tool and is intentionally not linearizable with concurrent live checkout traffic.
+
+## 7. Key Design Decisions and Trade-offs
+
+| # | Decision | Rejected Alternative | Key Trade-off |
+| --- | --- | --- | --- |
+| 1 | **Redis decides, PostgreSQL records** | Direct PostgreSQL `UPDATE ... WHERE remaining_stock > 0` | Avoids hot-row lock contention on 98% refusal traffic; adds async confirmation window (`RESERVED` → `CONFIRMED`) closed by retries + compensation |
+| 2 | **Single Lua script (`attemptPurchase`)** | `WATCH`/`MULTI` optimistic retries or distributed per-user lock | Zero retry storms and single round-trip atomicity; caps one sale at one Redis core (0.10 core used at 4,486 req/s) |
+| 3 | **Order-ID-fenced CAS (`RESERVED:<orderId>`)** | Boolean status flags | Prevents late rollbacks or stale workers from touching a newer reservation by the same buyer; requires Lua CAS scripts |
+| 4 | **Stateless Redis `ZSET` (`:pending`) orphan index** | Full `HSCAN` over `:users` + in-memory 2-strike `Map` | Turns 30 s sweep from `O(total_buyers)` to `O(pending_reservations)` and removes process-local strike state, making multi-worker sweeping safe out of the box |
+| 5 | **BullMQ on the same Redis (`jobId = orderId`)** | Separate RabbitMQ/SQS broker or DB transactional outbox | Zero extra broker/dual-write failure mode and built-in dedupe/retries; shares Redis failure domain |
+| 6 | **PG-first compensation + 5-min fixed 2 s retry** | Blind rollback on error, or short exponential backoff | Never releases a unit that already committed in PG; fixed 2 s step recovers within 2 s of DB return rather than waiting out long backoff |
+| 7 | **Typed union refusals + auto-pipelined fail-fast Redis** | Exception-driven flow + buffered offline queue | Eliminates stack traces on refusals and cut API CPU/req by 37% (`350 → 222 µs`) and Redis reads/EVALSHA from `0.9 → ~0.0` |
+| 8 | **Single-process default (API + Worker)** | Mandatory multi-service split locally | Simple one-container local/demo experience with clean internal module boundaries ready to split horizontally when needed |
+| 9 | **Server-corrected polling + singleflight micro-caches** | WebSockets / SSE per browser tab | Zero stateful connections at 100k viewers; 2 s poll + 200 ms status cache adds <= 2.2 s lag for out-of-band stock changes |
+
+## 8. Scaling to Production (10x-100x)
+
+Measured single-node bottleneck on a 4-vCPU WSL2 machine ([benchmarks.md](benchmarks.md)):
+- **API main thread:** **1.00 core saturated** at `4,486 req/s` (`222 µs` CPU/req).
+- **Redis:** `0.10 core` (`28 µs`/req) — ~10x headroom on one shard.
+- **PostgreSQL:** `0.05–0.09 core` — only winners write.
+
+To scale horizontally from single-node (~4.5k req/s) to 10x–100x production load:
+
+```mermaid
+flowchart LR
+    users["Users"] --> edge["CDN + Edge WAF / Distributed Rate Limit + Waiting Room"]
+    edge --> lb["Load Balancer (keepalive pool)"]
+    lb --> a1["Stateless API Replica 1"]
+    lb --> a2["Stateless API Replica N"]
+    a1 & a2 -->|"Lua hot path + queue.add"| redis[("Redis Cluster / Sentinel<br/>{saleId} hash tags + lease")]
+    w1["Dedicated Worker 1..M<br/>BullMQ + 30 s ZSET maintenance"] --> redis
+    w1 -->|"micro-batched order TX"| pg[("PostgreSQL Primary + Standby<br/>via PgBouncer")]
+```
+
+1. **Split stateless API replicas from dedicated BullMQ workers:** Dedicated CPU cores per API replica scale HTTP throughput linearly while isolating worker bursts from request p99. Cross-process coordination is already built on Redis: `flash_sale:{saleId}:maintenance_lock` serializes boot/tick/reset, and the `:pending` `ZSET` makes orphan sweeping stateless across workers.
+2. **Cluster clock & distributed rate limiting:** Move sale-window timestamps to `redis.call('TIME')` inside `attemptPurchase` (eliminating multi-replica clock skew) and promote `RateLimitGuard` from per-process memory to an edge WAF / Redis counter keyed by authenticated user ID + IP.
+3. **Mega-sale Redis & PostgreSQL write scaling:** `{saleId}` hash tags already shard *multiple concurrent sales* across Redis Cluster slots. For a single sale exceeding one Redis core or one PostgreSQL row lock, partition stock into `K` Redis sub-buckets (`{saleId:0}..{saleId:K-1}`) with consistent routing and micro-batch worker inserts so `flash_sales.remaining_stock` decrements once per batch rather than once per order.
+4. **Edge caching & sold-out short-circuit:** Serve `/products/featured` and `/flash-sales/current` from CDN (`stale-while-revalidate`), short-circuit `410 SOLD_OUT` at the edge once stock reaches zero, and place opening-second surges behind a virtual waiting room.
+5. **High availability:** Run Redis with Sentinel/Cluster + replicas and PostgreSQL with synchronous/streaming standby (the 5-minute BullMQ retry budget already rides out failover windows).
+
+## 9. Codebase Structure and Module DAG
 
 ```mermaid
 flowchart TD
     app[AppModule]
-    admin["AdminModule<br/>boot heal, maintenance tick, reset"]
+    admin["AdminModule<br/>boot heal, 30 s tick, reset"]
     checkout["CheckoutModule<br/>purchase endpoint"]
     flash["FlashSalesModule<br/>sale status, campaign row"]
-    orders["OrdersModule<br/>queue, worker, sweeper, lookup"]
+    orders["OrdersModule<br/>queue, worker, ZSET sweeper, lookup"]
     products["ProductsModule<br/>featured product cache"]
     health[HealthModule]
-    metrics["MetricsModule<br/>/metrics counters and queue gauge"]
+    metrics["MetricsModule<br/>/metrics counters & queue gauge"]
     ledger["SaleLedgerModule<br/>sole owner of flash_sale:*"]
     infra["Infrastructure<br/>RedisModule, QueueModule, DatabaseModule"]
 
@@ -149,99 +231,5 @@ flowchart TD
     products & flash & health & orders --> infra
 ```
 
-An arrow points from a module to a module it imports. The graph has no cycle and the code has no `forwardRef()`. Four placements keep it that way.
-
-- **`sale-ledger` is a leaf.** It depends only on the Redis connection. Checkout, orders, flash sales and admin all import its `index.ts`, so none of them needs another to reach the ledger. It exports `SaleLedgerRepository`, `SaleLedgerLeaseRepository`, and types.
-- **Metrics is a leaf.** `MetricsModule` exports `MetricsService` without importing business modules; `CheckoutModule` pushes attempt counts and `OrdersCoreModule` pushes persistence counts and registers a queue-depth collector.
-- **Orders owns rollback and compensation.** Checkout reserves a unit and hands it to orders. Releasing a unit after a failed enqueue or a failed persist also belongs to orders, so orders never imports checkout.
-- **Admin sits on top.** Boot heal, the maintenance tick and reset need products, the sale, the orders pipeline and the ledger. Admin imports all four, and nothing imports admin.
-
-### Layers inside a module
-
-| Layer | Owns | Must not |
-| --- | --- | --- |
-| `controllers/` | Routes, DTO binding, mapping an outcome to a status code | Branch on business rules, or inject a repository, `DataSource`, Redis or a queue |
-| `services/` | Orchestration over repositories, sibling services and queues | Run SQL, a query builder or a raw Redis command |
-| `repositories/` | SQL, transactions, Redis commands, Lua calls | Leak a storage format. Callers get `{ status, orderId }`, never `"RESERVED:<id>"` |
-| `processors/` | Turning a BullMQ job into a service call | Hold logic of their own |
-| `constants/`, `interfaces/`, `dto/` | TTLs, key builders, error codes, domain types, wire contracts | |
-
-`pnpm lint` enforces these rules, and [testing.md](testing.md#static-checks) lists them.
-
-### Infrastructure clients
-
-The process holds three Redis connections with different failure behavior. This matters under load.
-
-| Connection | Used by | While Redis is away |
-| --- | --- | --- |
-| Hot path (`REDIS_CLIENT`) | Every ledger command: purchase gate, status, order lookup | Offline queue off, 2 s command timeout, one retry per request, reconnect every 50 ms growing to 2 s. Commands reject at once, so the API answers 503 and does not buffer requests in memory. Auto-pipelining batches concurrent commands into one socket write |
-| Queue producer | `queue.add` on each purchase | The same fail-fast options, without auto-pipelining |
-| Queue worker | The BullMQ worker and its blocking client | ioredis defaults. A blocking read outlasts any command timeout, and the worker should wait out a reconnect and not fail |
-
-The hot-path client waits for `ready` before the app starts. PostgreSQL uses `DATABASE_POOL_MAX` connections when set (`1–200`), otherwise defaulting to `5` for `APP_ROLE=api` and `20` for `all` or `worker`, with a 2 s connect timeout and a 5 s statement timeout.
-
-A Redis or PostgreSQL error that is not an `HttpException` goes through one place, the global exception filter (`GlobalExceptionFilter`). If it matches an unreachable Redis (a timeout, a closed stream, `ECONNREFUSED`) or an unavailable PostgreSQL (`isDatabaseUnavailable`: SQLSTATE `08*`/`57P*`/`53300`, socket faults, pool or statement timeouts), the filter answers `503 TEMPORARY_FAILURE` and logs a warning. Anything else (including corrupt Lua script reply assertions and JS `TypeError`/`RangeError` bugs rethrown by `CheckoutService`) is a `500 INTERNAL_ERROR` with a stack in the log. `app.setup.ts` also attaches `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: no-referrer` on all API responses.
-
-### Boot and shutdown
-
-```mermaid
-flowchart TD
-    env["Load .env & validate environment<br/>APP_ROLE, TRUST_PROXY, SALE_* stop boot if invalid"] --> redisReady["Connect Redis and wait for ready"]
-    redisReady --> ddl["Create tables under an advisory lock (OnModuleInit)"]
-    ddl --> regMetrics["Register queue depth collector<br/>OrdersCoreModule OnApplicationBootstrap"]
-    regMetrics --> lease["Acquire Redis maintenance_lock<br/>up to 50 x 100 ms retries; skip with warning if held"]
-    lease --> seed["Seed the product and the sale row if absent"]
-    seed --> apply["Apply explicit SALE_* values to the stored sale<br/>only if it has no order and no ledger entry"]
-    apply --> restore["Restore lost Redis keys from PostgreSQL<br/>1,000-row batches, write only what is missing"]
-    restore --> resumeQ["Resume queue (fenced under maintenance_lock)"]
-    resumeQ --> sweep["Sweep orphaned reservations per APP_ROLE<br/>all: threshold 1 (BOOT) | worker: threshold 2 (INTERVAL) | api: skipped"]
-    sweep --> release["Release maintenance_lock (finally)"]
-    release --> listen["Open the HTTP listener"]
-```
-
-All of this runs before the listener opens, so `/health` turning green also means the heal finished.
-
-Shutdown runs the other way, and a spec fails if it does not. The maintenance timer stops and waits for a tick in progress. The worker closes and finishes its jobs. The queues close. Only then does Redis quit. A job in flight never meets a closed connection.
-
-## Frontend
-
-`apps/web` is React 19 with Tailwind CSS 4, built by Vite and served by nginx. It has five feature modules and a `shared/` folder.
-
-```mermaid
-flowchart TD
-    app["app/<br/>layout, error boundary"]
-    product["product<br/>featured product card"]
-    flash["flash-sale<br/>status poll, countdown, effective state"]
-    checkout["checkout<br/>form, purchase attempt, feedback"]
-    orders["orders<br/>lookup card, confirmation poller"]
-    simulation["simulation<br/>demo scenario toolbar"]
-    shared["shared/<br/>HTTP client, usePolling, Card, Alert"]
-
-    app --> product & flash & checkout & orders & simulation
-    checkout --> orders & flash
-    simulation --> flash
-    product & flash & checkout & orders & simulation --> shared
-```
-
-A module imports another only through its `index.ts`. Checkout imports the confirmation poller from orders, the same direction as the API's checkout to orders edge.
-
-How the browser stays correct without a socket:
-
-- **Rejections are values.** The HTTP client never throws, guards empty/non-JSON `2xx` replies with `INVALID_RESPONSE`, and returns `{ ok: true, data }` or `{ ok: false, status, error }` (network failures become status 0 `NETWORK_ERROR`).
-- **State is modeled explicitly as discriminated unions.** Request hooks hold `idle | loading | success | error`, the confirmation poller (1,000 ms × 30 attempts, keyed on `[userId, orderId]` so same-user retries after release/timeout start a fresh watch session) holds `idle | polling | confirmed | released | timed-out`, the scenario drawer (showing `AdminKeyField` on `401` and resending `x-admin-key`) holds `idle | applying | applied | failed`, and the status hook tracks `{ sale, error }`.
-- **Polling never overlaps.** `usePolling` runs a task, waits for it, then schedules the next run, so a slow response cannot stack requests.
-- **Components start nothing.** They hold no timer and make no request. Hooks do.
-- **The countdown trusts the server clock.** It counts from the response's `serverTime` plus the time elapsed since, so a laptop clock that is hours off still shows the right seconds. `useEffectiveSaleState` schedules one boundary `setTimeout` (clamped for 32-bit timer safety) rather than a 250 ms polling interval, eliminating idle re-renders while flipping `UPCOMING` -> `ACTIVE` -> `ENDED` on the exact boundary. The server stays the judge, and a click a moment early gets `SALE_UPCOMING`.
-- **Stale snapshots lose.** The status hook drops a snapshot whose `serverTime` is older than the one it holds, so a slow poll cannot undo a reset.
-- **A result stays visible while the next purchase is pending.** The banner keeps the previous outcome until the new answer arrives, so the card does not flash empty.
-
-## Vocabulary
-
-| Term | Meaning |
-| --- | --- |
-| Reservation | A `RESERVED:<orderId>` entry plus one unit taken from stock. Created by `attemptPurchase` |
-| Ledger | The Redis state of one sale: config, stock and buyer entries |
-| Fence | Writing only while the entry still holds the expected order id, as a compare-and-set in Lua |
-| Orphan | A `RESERVED` entry with no persistence or compensation job left to run |
-| Compensation | Asking PostgreSQL whether the order exists, then confirming or releasing the reservation |
-| Restore | Rebuilding lost Redis keys from PostgreSQL, writing only what is missing |
+- **Strict acyclic DAG (zero `forwardRef()`):** `SaleLedgerModule` and `MetricsModule` are leaves; `OrdersModule` owns rollback and compensation so it never imports `CheckoutModule`; `AdminModule` sits at the top.
+- **Frontend (`apps/web/src/`):** Feature-sliced React 19 + TypeScript + Tailwind v4 modules (`product`, `flash-sale`, `checkout`, `orders`, `simulation`) communicating strictly through public `index.ts` barrels, with zero `fetch` calls or raw timers inside presentational components.

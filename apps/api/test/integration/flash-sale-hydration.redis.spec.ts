@@ -2,7 +2,7 @@ import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { AppEnv } from '../../src/config/env.interface';
 import { ACTIVE_FLASH_SALE_ID } from '../../src/modules/flash-sales/constants/flash-sales.constants';
-import { FEATURED_PRODUCT_SEED } from '../../src/modules/products/constants/products.constants';
+import { FEATURED_PRODUCT_SEED } from '../../src/modules/products/products.types';
 import { flashSaleConfigKey, flashSaleStockKey, flashSaleUsersKey } from '../support/ledger-keys';
 import { createRealSaleHarness, type RealSaleHarness } from '../support/real-sale.harness';
 import { userIdOf } from '../support/user-id.fixtures';

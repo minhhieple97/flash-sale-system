@@ -20,59 +20,27 @@ describe('loadDotEnvFiles', () => {
   it('loads .env then ../../.env without overwriting already-set keys', () => {
     writeFileSync(
       join(appDir, '.env'),
-      ['APP_ROLE=api', 'LOG_LEVEL=debug', 'LOCAL_ONLY=from-app'].join('\n'),
+      ['DOTENV_TEST_PRESET=from-app', 'DOTENV_TEST_LOCAL=from-app'].join('\n'),
     );
     writeFileSync(
       join(rootDir, '.env'),
-      ['APP_ROLE=worker', 'LOG_LEVEL=warn', 'TRUST_PROXY=true', 'ROOT_ONLY=from-root'].join('\n'),
+      ['DOTENV_TEST_LOCAL=from-root', 'DOTENV_TEST_ROOT=from-root'].join('\n'),
     );
-    const env: NodeJS.ProcessEnv = { APP_ROLE: 'all', EMPTY_PRESET: '' };
+    const env: NodeJS.ProcessEnv = { DOTENV_TEST_PRESET: 'preset' };
 
-    loadDotEnvFiles({ cwd: appDir, env });
+    loadDotEnvFiles(appDir, env);
 
     expect(env).toEqual({
-      APP_ROLE: 'all',
-      EMPTY_PRESET: '',
-      LOG_LEVEL: 'debug',
-      LOCAL_ONLY: 'from-app',
-      TRUST_PROXY: 'true',
-      ROOT_ONLY: 'from-root',
-    });
-  });
-
-  it('handles blank lines, comments, export prefixes, and quoted values', () => {
-    writeFileSync(
-      join(appDir, '.env'),
-      [
-        '',
-        '  # full line comment',
-        'export EXPORTED=yes',
-        "SINGLE_QUOTED='hello # world' # trailing comment",
-        'DOUBLE_QUOTED="line1\\nline2 \\"quoted\\" # kept" # trailing comment',
-        'UNQUOTED_COMMENT=value # inline comment',
-        'UNQUOTED_HASH=abc#123',
-        'EMPTY_VALUE=',
-        'INVALID_LINE_WITHOUT_EQUALS',
-      ].join('\n'),
-    );
-    const env: NodeJS.ProcessEnv = {};
-
-    loadDotEnvFiles({ cwd: appDir, env });
-
-    expect(env).toEqual({
-      EXPORTED: 'yes',
-      SINGLE_QUOTED: 'hello # world',
-      DOUBLE_QUOTED: 'line1\nline2 "quoted" # kept',
-      UNQUOTED_COMMENT: 'value',
-      UNQUOTED_HASH: 'abc#123',
-      EMPTY_VALUE: '',
+      DOTENV_TEST_PRESET: 'preset',
+      DOTENV_TEST_LOCAL: 'from-app',
+      DOTENV_TEST_ROOT: 'from-root',
     });
   });
 
   it('silently ignores missing env files', () => {
     const env: NodeJS.ProcessEnv = { EXISTING: '1' };
 
-    expect(() => loadDotEnvFiles({ cwd: appDir, env })).not.toThrow();
+    expect(() => loadDotEnvFiles(appDir, env)).not.toThrow();
     expect(env).toEqual({ EXISTING: '1' });
   });
 });

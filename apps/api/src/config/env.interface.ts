@@ -1,10 +1,8 @@
 export type NodeEnv = 'development' | 'production' | 'test';
-export type AppRole = 'all' | 'api' | 'worker';
 export type LogLevel = 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
 
 export interface AppEnv {
   NODE_ENV: NodeEnv;
-  APP_ROLE: AppRole;
   LOG_LEVEL: LogLevel;
   PORT: number;
   POSTGRES_HOST: string;

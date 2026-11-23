@@ -11,7 +11,7 @@ import { CheckoutService } from '../../src/modules/checkout/services/checkout.se
 import { ACTIVE_FLASH_SALE_ID } from '../../src/modules/flash-sales/constants/flash-sales.constants';
 import { FlashSalesService } from '../../src/modules/flash-sales/services/flash-sales.service';
 import { OrdersRepository } from '../../src/modules/orders/repositories/orders.repository';
-import { FEATURED_PRODUCT_ID } from '../../src/modules/products/constants/products.constants';
+import { FEATURED_PRODUCT_ID } from '../../src/modules/products/products.types';
 import type { ReservationRef } from '../../src/modules/sale-ledger';
 import { SaleLedgerRepository } from '../../src/modules/sale-ledger';
 import { createAppTestingModule } from './app-module.testing';

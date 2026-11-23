@@ -179,14 +179,16 @@ describe('application shutdown order', () => {
     const app = await bootApp([AppModule]);
     const { events, queueClosed } = probeShutdown(app);
     const cache = app.get(SaleLedgerRepository, { strict: false });
-    const list = cache.listReservations.bind(cache);
+    const list = cache.listPendingReservations.bind(cache);
     const sweepStarted = deferred();
     const release = deferred();
-    jest.spyOn(cache, 'listReservations').mockImplementationOnce(async (saleId) => {
-      sweepStarted.resolve();
-      await release.promise;
-      return list(saleId);
-    });
+    jest
+      .spyOn(cache, 'listPendingReservations')
+      .mockImplementationOnce(async (saleId, olderThan) => {
+        sweepStarted.resolve();
+        await release.promise;
+        return list(saleId, olderThan);
+      });
     const tick = app
       .get(LedgerMaintenanceService, { strict: false })
       .tick()

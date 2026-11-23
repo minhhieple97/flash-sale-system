@@ -8,21 +8,15 @@ import { FlashSalesService } from '../../flash-sales/services/flash-sales.servic
 import { OrderPersistenceService } from '../../orders/services/order-persistence.service';
 import { SaleLedgerLeaseRepository, SaleLedgerRepository } from '../../sale-ledger';
 import { RESET_LEASE_MAX_ATTEMPTS, RESET_LEASE_RETRY_MS } from '../constants/admin.constants';
-import type {
-  PendingResetOutcome,
-  ResetFlashSaleInput,
-  ResetFlashSalePlan,
-} from '../interfaces/admin.interface';
+import type { ResetFlashSaleInput, ResetFlashSalePlan } from '../interfaces/admin.interface';
 import { runWithMaintenanceLease } from '../utils/maintenance-lease.util';
 import { resolveResetPlan } from '../utils/reset-plan.util';
 import { buildSaleSnapshot } from '../utils/sale-snapshot.util';
-import { SaleMutationLock } from './sale-mutation-lock.service';
 
 /** Demo/test tool. Not linearizable with concurrent purchases; callers reset before traffic. */
 @Injectable()
 export class FlashSaleResetService {
   private readonly logger = new Logger(FlashSaleResetService.name);
-  private pendingPlan: ResetFlashSalePlan | null = null;
 
   constructor(
     private readonly campaigns: FlashSaleCampaignService,
@@ -30,29 +24,19 @@ export class FlashSaleResetService {
     private readonly orderPersistence: OrderPersistenceService,
     private readonly ledger: SaleLedgerRepository,
     private readonly leases: SaleLedgerLeaseRepository,
-    private readonly lock: SaleMutationLock,
     private readonly clock: ClockService,
   ) {}
 
-  reset(input: ResetFlashSaleInput): Promise<FlashSaleStatus> {
-    return this.lock.runExclusive(async () => {
-      const now = this.clock.nowMs();
-      const plan = resolveResetPlan(input, now, this.campaigns.configuredWindow());
-      const attempt = await runWithMaintenanceLease({
-        leases: this.leases,
-        logger: this.logger,
-        retry: { maxAttempts: RESET_LEASE_MAX_ATTEMPTS, retryDelayMs: RESET_LEASE_RETRY_MS },
-        run: () => this.runReset(plan),
-      });
-      if (!attempt.acquired) throw temporaryFailure();
-      return this.flashSales.getCurrentStatus();
+  async reset(input: ResetFlashSaleInput): Promise<FlashSaleStatus> {
+    const plan = resolveResetPlan(input, this.clock.nowMs(), this.campaigns.configuredWindow());
+    const attempt = await runWithMaintenanceLease({
+      leases: this.leases,
+      logger: this.logger,
+      retry: { maxAttempts: RESET_LEASE_MAX_ATTEMPTS, retryDelayMs: RESET_LEASE_RETRY_MS },
+      run: () => this.runReset(plan),
     });
-  }
-
-  async completePendingReset(): Promise<PendingResetOutcome> {
-    if (this.pendingPlan === null) return 'NONE';
-    await this.runReset(this.pendingPlan);
-    return 'COMPLETED';
+    if (!attempt.acquired) throw temporaryFailure();
+    return this.flashSales.getCurrentStatus();
   }
 
   async resumeProcessing(): Promise<void> {
@@ -76,12 +60,10 @@ export class FlashSaleResetService {
       startsAtMs: plan.startsAtMs,
       endsAtMs: plan.endsAtMs,
     });
-    this.pendingPlan = plan;
     await this.ledger.replaceState({
       snapshot: buildSaleSnapshot(campaign, plan.totalStock),
       confirmed: [],
     });
-    this.pendingPlan = null;
     this.flashSales.invalidateCache();
   }
 }

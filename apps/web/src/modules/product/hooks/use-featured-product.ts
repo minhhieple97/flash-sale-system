@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react';
-import type { AsyncState } from '@/shared/types/async-state.types';
-import { fetchFeaturedProduct } from '../api/product.api';
+import { requestJson } from '@/shared/api/http-client';
+import type { AsyncState } from '@/shared/types/common.types';
 import type { Product } from '../types/product.types';
+
+const FEATURED_PRODUCT_PATH = '/products/featured';
 
 export function useFeaturedProduct(): AsyncState<Product> {
   const [state, setState] = useState<AsyncState<Product>>({ status: 'loading' });
 
   useEffect(() => {
-    let isActive = true;
-    fetchFeaturedProduct().then((result) => {
-      if (!isActive) return;
+    let active = true;
+    void requestJson<Product>({ path: FEATURED_PRODUCT_PATH }).then((result) => {
+      if (!active) return;
       setState(
         result.ok
           ? { status: 'success', data: result.data }
@@ -17,7 +19,7 @@ export function useFeaturedProduct(): AsyncState<Product> {
       );
     });
     return () => {
-      isActive = false;
+      active = false;
     };
   }, []);
 

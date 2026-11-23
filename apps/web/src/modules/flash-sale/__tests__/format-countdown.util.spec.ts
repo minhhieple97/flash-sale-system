@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatCountdown } from '../utils/format-countdown.util';
+import { formatCountdown } from '../components/CountdownTimer';
 
 describe('formatCountdown', () => {
   it.each([

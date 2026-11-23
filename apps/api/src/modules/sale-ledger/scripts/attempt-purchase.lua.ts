@@ -10,6 +10,7 @@ type AttemptPurchaseArgs = [
   configKey: string,
   stockKey: string,
   usersKey: string,
+  pendingKey: string,
   userId: string,
   nowMs: number,
   orderId: string,
@@ -19,6 +20,7 @@ const reply = (verdict: ReservationVerdict): string => `return '${verdict}'`;
 
 const LUA = `
 if redis.call('HGET', KEYS[3], ARGV[1]) == '${RESERVATION_ENTRY_PREFIX.RESERVED}' .. ARGV[3] then
+  redis.call('ZADD', KEYS[4], 'NX', ARGV[2], ARGV[1])
   ${reply('RESERVED')}
 end
 
@@ -37,6 +39,7 @@ if stock <= 0 then ${reply('SOLD_OUT')} end
 
 redis.call('DECR', KEYS[2])
 redis.call('HSET', KEYS[3], ARGV[1], '${RESERVATION_ENTRY_PREFIX.RESERVED}' .. ARGV[3])
+redis.call('ZADD', KEYS[4], ARGV[2], ARGV[1])
 ${reply('RESERVED')}
 `;
 

@@ -18,10 +18,9 @@ import {
   DEFAULT_RATE_LIMIT_WINDOW_MS,
   MAX_SALE_TOTAL_STOCK,
 } from '../common/constants/common.constants';
-import type { AppEnv, AppRole, LogLevel, NodeEnv } from './env.interface';
+import type { AppEnv, LogLevel, NodeEnv } from './env.interface';
 
 const NODE_ENVS: readonly NodeEnv[] = ['development', 'production', 'test'];
-const APP_ROLES: readonly AppRole[] = ['all', 'api', 'worker'];
 const LOG_LEVELS: readonly LogLevel[] = [
   'fatal',
   'error',
@@ -66,7 +65,6 @@ const toOptionalInteger = ({ value }: { value: unknown }): unknown =>
 
 class EnvironmentVariables implements AppEnv {
   @IsIn(NODE_ENVS) NODE_ENV: NodeEnv = 'development';
-  @IsIn(APP_ROLES) APP_ROLE: AppRole = 'all';
   @IsIn(LOG_LEVELS) LOG_LEVEL: LogLevel = 'info';
 
   @Transform(toInteger) @IsInt() @Min(MIN_PORT) @Max(MAX_PORT) PORT = DEFAULT_HTTP_PORT;
@@ -148,16 +146,6 @@ function validateSaleWindow(env: AppEnv): AppEnv {
   if (env.SALE_STARTS_AT === undefined || env.SALE_ENDS_AT === undefined) return env;
   if (Date.parse(env.SALE_ENDS_AT) > Date.parse(env.SALE_STARTS_AT)) return env;
   throw invalid('SALE_ENDS_AT', 'SALE_ENDS_AT must be after SALE_STARTS_AT');
-}
-
-function isAppRole(value: string): value is AppRole {
-  return (APP_ROLES as readonly string[]).includes(value);
-}
-
-export function parseAppRole(raw?: string): AppRole {
-  if (raw === undefined || raw === '') return 'all';
-  if (isAppRole(raw)) return raw;
-  throw invalid('APP_ROLE', `APP_ROLE must be one of ${APP_ROLES.join(', ')}`);
 }
 
 export function parseTrustProxy(raw?: string): boolean {

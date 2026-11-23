@@ -53,3 +53,9 @@ export const BUY_DISABLED_REASON: Readonly<Record<SaleState, string | null>> = {
 };
 
 export const BUY_DISABLED_REASON_UNKNOWN = 'Waiting for the sale status...';
+
+export function feedbackFor(code: string): FeedbackPresentation {
+  return Object.hasOwn(PURCHASE_FEEDBACK, code)
+    ? PURCHASE_FEEDBACK[code as FeedbackCode]
+    : FALLBACK_PURCHASE_FEEDBACK;
+}

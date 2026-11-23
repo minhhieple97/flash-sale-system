@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "biome check --error-on-warnings . && node ../../scripts/arch-check.mjs"
+    "lint": "biome check --error-on-warnings ."
   },
   "dependencies": {
     "react": "19.3.1",

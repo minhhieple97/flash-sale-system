@@ -4,6 +4,7 @@ import { type AttemptPurchaseParams, SaleLedgerRepository } from '../../src/modu
 import {
   flashSaleConfigKey,
   flashSaleMaintenanceLockKey,
+  flashSalePendingKey,
   flashSaleStockKey,
   flashSaleUsersKey,
   HYDRATION_BATCH_SIZE,
@@ -31,7 +32,7 @@ describe('SaleLedgerRepository.reserve', () => {
     return { repository: new SaleLedgerRepository(redis), attemptPurchase };
   }
 
-  it('passes config, stock and users keys, then user id, now and order id, in that order', async () => {
+  it('passes config, stock, users and pending keys, then user id, now and order id', async () => {
     const { repository, attemptPurchase } = build('RESERVED');
 
     await repository.reserve(params);
@@ -41,6 +42,7 @@ describe('SaleLedgerRepository.reserve', () => {
       flashSaleConfigKey(params.saleId),
       flashSaleStockKey(params.saleId),
       flashSaleUsersKey(params.saleId),
+      flashSalePendingKey(params.saleId),
       params.userId,
       NOW_MS,
       params.orderId,
@@ -77,6 +79,7 @@ describe('sale-ledger cluster key builders and constants', () => {
     expect(flashSaleConfigKey('sale-1')).toBe('flash_sale:{sale-1}:config');
     expect(flashSaleStockKey('sale-1')).toBe('flash_sale:{sale-1}:stock');
     expect(flashSaleUsersKey('sale-1')).toBe('flash_sale:{sale-1}:users');
+    expect(flashSalePendingKey('sale-1')).toBe('flash_sale:{sale-1}:pending');
     expect(flashSaleMaintenanceLockKey('sale-1')).toBe('flash_sale:{sale-1}:maintenance_lock');
   });
 
@@ -88,8 +91,8 @@ describe('sale-ledger cluster key builders and constants', () => {
 });
 
 describe('SaleLedgerRepository.invalidateState', () => {
-  it('deletes config, stock and users keys together in one DEL call', async () => {
-    const del = jest.fn().mockResolvedValue(3);
+  it('deletes config, stock, users and pending keys together in one DEL call', async () => {
+    const del = jest.fn().mockResolvedValue(4);
     const repository = new SaleLedgerRepository({ del } as unknown as SaleLedgerRedis);
 
     await repository.invalidateState('sale-1');
@@ -99,6 +102,7 @@ describe('SaleLedgerRepository.invalidateState', () => {
       flashSaleConfigKey('sale-1'),
       flashSaleStockKey('sale-1'),
       flashSaleUsersKey('sale-1'),
+      flashSalePendingKey('sale-1'),
     );
   });
 });

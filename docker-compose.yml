@@ -39,7 +39,6 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      APP_ROLE: ${APP_ROLE:-all}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       PORT: 3000
       POSTGRES_HOST: postgres

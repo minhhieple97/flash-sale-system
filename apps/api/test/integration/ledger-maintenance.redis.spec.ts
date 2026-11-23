@@ -1,5 +1,7 @@
+import { ClockService } from '../../src/common/providers/clock.service';
 import { ACTIVE_FLASH_SALE_ID } from '../../src/modules/flash-sales/constants/flash-sales.constants';
 import { FlashSaleCampaignService } from '../../src/modules/flash-sales/services/flash-sale-campaign.service';
+import { ORPHAN_GRACE_MS } from '../../src/modules/orders/constants/orders.constants';
 import { expectLedgerConverged } from '../support/ledger-convergence';
 import { flashSaleStockKey, flashSaleUsersKey } from '../support/ledger-keys';
 import { createRealSaleHarness, type RealSaleHarness } from '../support/real-sale.harness';
@@ -35,7 +37,7 @@ describe('LedgerMaintenanceService on the real stack', () => {
     await h.close();
   });
 
-  it('heals reservations left by a reset that failed after the queue drain within two ticks', async () => {
+  it('heals reservations left by a reset that failed after the queue drain once the grace window elapses', async () => {
     await resetTo(6);
     await h.queue.pause();
     for (let buyer = 0; buyer < 5; buyer += 1) {
@@ -49,7 +51,9 @@ describe('LedgerMaintenanceService on the real stack', () => {
       'pg fault',
     );
 
-    await h.maintenance.tick();
+    jest
+      .spyOn(h.moduleRef.get(ClockService, { strict: false }), 'nowMs')
+      .mockReturnValue(Date.now() + ORPHAN_GRACE_MS + 1);
     await h.maintenance.tick();
 
     expect((await reservedEntries()).length).toBe(0);

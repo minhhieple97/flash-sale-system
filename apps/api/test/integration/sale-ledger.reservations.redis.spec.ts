@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { flashSaleConfigKey, flashSaleStockKey, flashSaleUsersKey } from '../support/ledger-keys';
+import {
+  flashSaleConfigKey,
+  flashSalePendingKey,
+  flashSaleStockKey,
+  flashSaleUsersKey,
+} from '../support/ledger-keys';
 import { createSaleLedgerHarness, type SaleLedgerHarness } from '../support/sale-ledger.harness';
 import { userIdOf } from '../support/user-id.fixtures';
 
@@ -62,38 +67,36 @@ describe('SaleLedgerRepository', () => {
     });
   });
 
-  describe('listReservations', () => {
-    it('returns the RESERVED entries as refs and skips CONFIRMED ones', async () => {
+  describe('listPendingReservations', () => {
+    it('returns the RESERVED entries from the pending ZSET and omits CONFIRMED ones', async () => {
       const saleId = await seedSale(5);
       const alice = await reserve(saleId, 'alice');
       const bob = await reserve(saleId, 'bob');
       await ledger.confirmReservation(bob, bob.orderId);
 
-      const refs = await ledger.listReservations(saleId);
+      const refs = await ledger.listPendingReservations(saleId);
 
       expect(refs).toEqual([alice]);
+      expect(await redis.zrange(flashSalePendingKey(saleId), 0, -1)).toEqual([alice.userId]);
     });
 
-    it('returns nothing for a sale without a users hash', async () => {
-      const refs = await ledger.listReservations(harness.newSaleId());
+    it('returns nothing for a sale without pending entries', async () => {
+      const refs = await ledger.listPendingReservations(harness.newSaleId());
 
       expect(refs).toEqual([]);
     });
 
-    it('walks a users hash larger than one scan batch, each entry once', async () => {
+    it('filters by olderThanMs cutoff and self-prunes stale non-RESERVED ZSET members', async () => {
       const saleId = await seedSale(5);
-      const entries = Array.from({ length: 1200 }, (_, index) => [`user-${index}`, randomUUID()]);
-      await redis.hset(
-        flashSaleUsersKey(saleId),
-        Object.fromEntries(entries.map(([user, orderId]) => [user, `RESERVED:${orderId}`])),
-      );
+      const alice = await reserve(saleId, 'alice');
+      await redis.zadd(flashSalePendingKey(saleId), 100, 'stale-user');
 
-      const refs = await ledger.listReservations(saleId);
+      const beforeCutoff = await ledger.listPendingReservations(saleId, 500);
+      const allPending = await ledger.listPendingReservations(saleId);
 
-      expect(refs).toHaveLength(entries.length);
-      expect(new Set(refs.map((ref) => ref.orderId))).toEqual(
-        new Set(entries.map(([, orderId]) => orderId)),
-      );
+      expect(beforeCutoff).toEqual([]);
+      expect(allPending).toEqual([alice]);
+      expect(await redis.zscore(flashSalePendingKey(saleId), 'stale-user')).toBeNull();
     });
   });
 

@@ -20,17 +20,6 @@ export function parseEntry(raw: string | null): ReservationSlot {
   throw new Error(`Corrupt reservation entry with an unknown prefix: ${raw}`);
 }
 
-/** HSCAN replies alternate field and value. HSCAN may repeat a field; the map keeps it once. */
-export function collectReserved(
-  fieldsAndValues: readonly string[],
-  into: Map<string, string>,
-): void {
-  for (let index = 0; index < fieldsAndValues.length; index += 2) {
-    const slot = parseEntry(fieldsAndValues[index + 1]);
-    if (slot.status === 'RESERVED') into.set(fieldsAndValues[index], slot.orderId);
-  }
-}
-
 export function encodeConfirmedEntries(
   confirmed: readonly ConfirmedReservation[],
 ): Record<string, string> {

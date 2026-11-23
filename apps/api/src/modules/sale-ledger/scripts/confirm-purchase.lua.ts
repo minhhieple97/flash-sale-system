@@ -7,6 +7,7 @@ import type { LuaScript } from './lua-script.interface';
 
 type ConfirmPurchaseArgs = [
   usersKey: string,
+  pendingKey: string,
   userId: string,
   reservedOrderId: string,
   confirmedOrderId: string,
@@ -21,6 +22,7 @@ if held ~= '${RESERVATION_ENTRY_PREFIX.RESERVED}' .. ARGV[2] and held ~= ${CONFI
 end
 
 redis.call('HSET', KEYS[1], ARGV[1], ${CONFIRMED_ENTRY})
+redis.call('ZREM', KEYS[2], ARGV[1])
 return ${REPLY.CONFIRMED}
 `;
 

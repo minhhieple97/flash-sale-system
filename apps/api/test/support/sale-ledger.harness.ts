@@ -11,6 +11,7 @@ import { buildSnapshot, START_MS } from './flash-sale.fixtures';
 import {
   SALE_CONFIG_FIELDS as F,
   flashSaleConfigKey,
+  flashSalePendingKey,
   flashSaleStockKey,
   flashSaleUsersKey,
   SALE_LEDGER_REDIS,
@@ -73,6 +74,7 @@ export async function createSaleLedgerHarness(): Promise<SaleLedgerHarness> {
         flashSaleConfigKey(id),
         flashSaleStockKey(id),
         flashSaleUsersKey(id),
+        flashSalePendingKey(id),
       ]);
       if (keys.length > 0) await redis.del(...keys);
       await moduleRef.close();

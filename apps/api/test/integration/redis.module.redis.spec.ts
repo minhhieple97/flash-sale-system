@@ -14,6 +14,7 @@ import { END_MS, START_MS } from '../support/flash-sale.fixtures';
 import {
   SALE_CONFIG_FIELDS as F,
   flashSaleConfigKey,
+  flashSalePendingKey,
   flashSaleStockKey,
   flashSaleUsersKey,
   SALE_LEDGER_REDIS,
@@ -89,6 +90,7 @@ function attemptFor(redis: SaleLedgerRedis, saleId: string) {
       flashSaleConfigKey(saleId),
       flashSaleStockKey(saleId),
       flashSaleUsersKey(saleId),
+      flashSalePendingKey(saleId),
       userIdOf(`buyer-${index}`),
       START_MS,
       `order-${index}`,
@@ -131,6 +133,7 @@ describe('RedisModule', () => {
       flashSaleConfigKey(saleId),
       flashSaleStockKey(saleId),
       flashSaleUsersKey(saleId),
+      flashSalePendingKey(saleId),
     ]);
     if (keys.length > 0) await client.del(...keys);
     await moduleRef.close();

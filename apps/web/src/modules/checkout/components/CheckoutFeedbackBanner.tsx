@@ -4,10 +4,10 @@ import { Alert } from '@/shared/components/Alert';
 import {
   CONFIRMATION_FEEDBACK_KEY,
   CONFIRMATION_NOTE,
+  feedbackFor,
   PURCHASE_FEEDBACK,
 } from '../constants/checkout.constants';
 import type { PurchaseAttemptState, PurchaseReservation } from '../types/checkout.types';
-import { feedbackFor } from '../utils/purchase-feedback.util';
 
 interface CheckoutFeedbackBannerProps {
   state: PurchaseAttemptState;

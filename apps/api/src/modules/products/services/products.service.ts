@@ -5,11 +5,12 @@ import {
   FEATURED_PRODUCT_CACHE_TTL_MS,
   FEATURED_PRODUCT_ID,
   FEATURED_PRODUCT_SEED,
+  type FeaturedProductCacheEntry,
   PRODUCT_ERROR_CODES,
   PRODUCT_NOT_FOUND_MESSAGE,
+  type Product,
   STALE_PRODUCT_FALLBACK_TTL_MS,
-} from '../constants/products.constants';
-import type { FeaturedProductCacheEntry, Product } from '../interfaces/product.interface';
+} from '../products.types';
 import { ProductsRepository } from '../repositories/products.repository';
 
 @Injectable()

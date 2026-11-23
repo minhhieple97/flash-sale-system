@@ -1,13 +1,15 @@
-import {
-  API_BASE_PATH,
-  FALLBACK_ERROR_MESSAGE,
-  httpStatusErrorCode,
-  INVALID_RESPONSE_ERROR_CODE,
-  JSON_CONTENT_TYPE,
-  NETWORK_ERROR_CODE,
-  NETWORK_ERROR_MESSAGE,
-} from '../constants/api.constants';
-import type { ApiError, HttpResult } from '../types/api.types';
+import type { ApiError, HttpResult } from '../types/common.types';
+
+export const API_BASE_PATH = '/api/v1';
+export const NETWORK_ERROR_CODE = 'NETWORK_ERROR';
+export const INVALID_RESPONSE_ERROR_CODE = 'INVALID_RESPONSE';
+export const NETWORK_ERROR_MESSAGE = 'Could not reach the server. Check your connection.';
+export const FALLBACK_ERROR_MESSAGE = 'Something went wrong. Please try again.';
+export const JSON_CONTENT_TYPE = 'application/json';
+
+export function httpStatusErrorCode(status: number): string {
+  return `HTTP_${status}`;
+}
 
 export interface HttpRequest {
   path: string;

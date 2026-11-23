@@ -7,6 +7,7 @@ export {
   CONFIRM_PURCHASE_REPLY,
   flashSaleConfigKey,
   flashSaleMaintenanceLockKey,
+  flashSalePendingKey,
   flashSaleStockKey,
   flashSaleUsersKey,
   HYDRATION_BATCH_SIZE,

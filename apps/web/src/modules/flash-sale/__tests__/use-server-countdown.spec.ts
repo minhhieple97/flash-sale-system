@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useServerCountdown } from '../components/CountdownTimer';
 import { COUNTDOWN_TICK_MS } from '../constants/flash-sale.constants';
-import { useServerCountdown } from '../hooks/use-server-countdown';
 import { HOUR_MS, isoAt, SERVER_NOW } from './flash-sale-fixtures';
 
 const PARAMS = { targetAt: isoAt(15_000), serverTime: isoAt(0) };

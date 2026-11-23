@@ -21,8 +21,7 @@ export async function expectLedgerConverged(
 ): Promise<void> {
   const sweeper = app.get(OrphanSweeper, { strict: false });
   const redis = app.get<SaleLedgerRedis>(SALE_LEDGER_REDIS, { strict: false });
-  await sweeper.sweepOrphans(saleId, 'INTERVAL');
-  await sweeper.sweepOrphans(saleId, 'INTERVAL');
+  await sweeper.sweepOrphans(saleId, 0);
 
   const jobless = await findJoblessReservations(app, saleId);
   const stock = Number(await redis.get(flashSaleStockKey(saleId)));
@@ -37,7 +36,7 @@ async function findJoblessReservations(
   const cache = app.get(SaleLedgerRepository, { strict: false });
   const persistence = app.get(OrderPersistenceService, { strict: false });
   const jobless: ReservationRef[] = [];
-  for (const ref of await cache.listReservations(saleId)) {
+  for (const ref of await cache.listPendingReservations(saleId)) {
     if (await persistence.hasPendingJob(ref)) continue;
     const slot = await cache.findSlot(saleId, ref.userId);
     if (slot.status === 'RESERVED' && slot.orderId === ref.orderId) jobless.push(ref);

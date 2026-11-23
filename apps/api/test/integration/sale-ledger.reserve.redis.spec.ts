@@ -10,6 +10,7 @@ import { END_MS, START_MS } from '../support/flash-sale.fixtures';
 import {
   SALE_CONFIG_FIELDS as F,
   flashSaleConfigKey,
+  flashSalePendingKey,
   flashSaleStockKey,
   flashSaleUsersKey,
   ROLLBACK_PURCHASE_REPLY,
@@ -222,6 +223,7 @@ describe('SaleLedgerRepository on real Redis', () => {
       const reply = await redis.rollbackPurchase(
         flashSaleStockKey(sale.saleId),
         flashSaleUsersKey(sale.saleId),
+        flashSalePendingKey(sale.saleId),
         userIdOf('alice'),
         orderId,
       );

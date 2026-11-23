@@ -62,7 +62,7 @@ function ordersMocks(calls: string[]) {
 
 function cacheMocks(calls: string[]) {
   return {
-    listReservations: jest.fn<Promise<ReservationRef[]>, [string]>(async () => []),
+    listPendingReservations: jest.fn<Promise<ReservationRef[]>, [string, number?]>(async () => []),
     findSlot: jest.fn<Promise<ReservationSlot>, [string, NormalizedUserId]>(async () => ({
       status: 'RESERVED',
       orderId: PERSISTENCE_REF.orderId,

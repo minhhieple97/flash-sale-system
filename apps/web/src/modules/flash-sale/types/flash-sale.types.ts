@@ -1,5 +1,4 @@
-import type { ApiError } from '@/shared/types/api.types';
-import type { Tone } from '@/shared/types/tone.types';
+import type { ApiError, Tone } from '@/shared/types/common.types';
 
 export type SaleState = 'UPCOMING' | 'ACTIVE' | 'SOLD_OUT' | 'ENDED';
 

@@ -1,9 +1,11 @@
 import { useCallback, useRef, useState } from 'react';
-import { submitPurchase } from '../api/checkout.api';
+import { requestJson } from '@/shared/api/http-client';
+import { PURCHASE_PATH } from '../constants/checkout.constants';
 import type {
   PurchaseAttemptHandle,
   PurchaseAttemptSnapshot,
   PurchaseAttemptState,
+  PurchaseReservedBody,
   PurchaseResult,
 } from '../types/checkout.types';
 
@@ -20,7 +22,11 @@ export function usePurchaseAttempt(): PurchaseAttemptHandle {
     if (isInFlight.current) return;
     isInFlight.current = true;
     setAttempt((previous) => ({ ...previous, state: { status: 'loading' } }));
-    const result = await submitPurchase(userId);
+    const result = await requestJson<PurchaseReservedBody>({
+      path: PURCHASE_PATH,
+      method: 'POST',
+      body: { userId },
+    });
     isInFlight.current = false;
     const completed: PurchaseResult = result.ok
       ? { status: 'success', data: result.data }

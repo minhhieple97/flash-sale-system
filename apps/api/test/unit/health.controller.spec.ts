@@ -3,8 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { configureApp } from '../../src/app.setup';
 import { HealthController } from '../../src/modules/health/controllers/health.controller';
-import type { HealthReport } from '../../src/modules/health/interfaces/health.interface';
-import { HealthService } from '../../src/modules/health/services/health.service';
+import { type HealthReport, HealthService } from '../../src/modules/health/services/health.service';
 
 const OK_REPORT: HealthReport = { status: 'ok', checks: { database: 'up', redis: 'up' } };
 const ERROR_REPORT: HealthReport = { status: 'error', checks: { database: 'down', redis: 'up' } };

@@ -7,11 +7,15 @@ import { AppConfigModule } from '../../src/config/app-config.module';
 import { DatabaseModule } from '../../src/infrastructure/database/database.module';
 import { ORDER_PERSISTENCE_QUEUE } from '../../src/infrastructure/queue/queue.constants';
 import { QueueModule } from '../../src/infrastructure/queue/queue.module';
-import { ORDER_PERSISTENCE_JOB_NAME } from '../../src/modules/orders/constants/orders.constants';
+import {
+  ORDER_PERSISTENCE_JOB_NAME,
+  ORPHAN_GRACE_MS,
+} from '../../src/modules/orders/constants/orders.constants';
 import { OrdersRepository } from '../../src/modules/orders/repositories/orders.repository';
 import { OrderPersistenceService } from '../../src/modules/orders/services/order-persistence.service';
 import { OrphanSweeper } from '../../src/modules/orders/services/orphan-sweeper.service';
 import type { ReservationRef } from '../../src/modules/sale-ledger';
+import { START_MS } from '../support/flash-sale.fixtures';
 import { flashSaleStockKey } from '../support/ledger-keys';
 import { createSaleDbHarness, type SaleDbHarness } from '../support/sale-db.harness';
 import { createSaleLedgerHarness, type SaleLedgerHarness } from '../support/sale-ledger.harness';
@@ -57,7 +61,8 @@ describe('OrphanSweeper on the real queue', () => {
     );
   });
 
-  const newSweeper = (): OrphanSweeper => new OrphanSweeper(persistence, ledgerHarness.ledger);
+  const newSweeper = (nowMs = START_MS): OrphanSweeper =>
+    new OrphanSweeper(persistence, ledgerHarness.ledger, { nowMs: () => nowMs } as ClockService);
 
   afterAll(async () => {
     for (const jobId of jobIds) await (await queue.getJob(jobId))?.remove();
@@ -98,11 +103,10 @@ describe('OrphanSweeper on the real queue', () => {
   it('releases a reservation that never got a job and returns its unit to the stock', async () => {
     const ref = await reserveInFreshSale();
 
-    const summary = await newSweeper().sweepOrphans(ref.saleId, 'BOOT');
+    const summary = await newSweeper().sweepOrphans(ref.saleId, 0);
 
     expect(summary).toEqual({
       pending: 0,
-      candidates: 0,
       compensated: { ...NONE_COMPENSATED, RELEASED: 1 },
     });
     expect(await redisStockOf(ref.saleId)).toBe(STOCK);
@@ -113,9 +117,9 @@ describe('OrphanSweeper on the real queue', () => {
     const ref = await reserveInFreshSale();
     await enqueuePersistence(ref);
 
-    const summary = await newSweeper().sweepOrphans(ref.saleId, 'BOOT');
+    const summary = await newSweeper().sweepOrphans(ref.saleId, 0);
 
-    expect(summary).toEqual({ pending: 1, candidates: 0, compensated: NONE_COMPENSATED });
+    expect(summary).toEqual({ pending: 1, compensated: NONE_COMPENSATED });
     expect(await redisStockOf(ref.saleId)).toBe(STOCK - 1);
     expect(await ledgerHarness.ledger.findSlot(ref.saleId, ref.userId)).toEqual({
       status: 'RESERVED',
@@ -127,11 +131,10 @@ describe('OrphanSweeper on the real queue', () => {
     const ref = await reserveInFreshSale();
     await ordersRepository.persistConfirmedOrder(ref);
 
-    const summary = await newSweeper().sweepOrphans(ref.saleId, 'BOOT');
+    const summary = await newSweeper().sweepOrphans(ref.saleId, 0);
 
     expect(summary).toEqual({
       pending: 0,
-      candidates: 0,
       compensated: { ...NONE_COMPENSATED, CONFIRMED: 1 },
     });
     expect(await ledgerHarness.ledger.findSlot(ref.saleId, ref.userId)).toEqual({
@@ -146,39 +149,36 @@ describe('OrphanSweeper on the real queue', () => {
     await failPersistenceJob(ref);
     expect(await queue.getJobState(ref.orderId)).toBe('failed');
 
-    const summary = await newSweeper().sweepOrphans(ref.saleId, 'BOOT');
+    const summary = await newSweeper().sweepOrphans(ref.saleId, 0);
 
     expect(summary).toEqual({
       pending: 0,
-      candidates: 0,
       compensated: { ...NONE_COMPENSATED, RELEASED: 1 },
     });
     expect(await redisStockOf(ref.saleId)).toBe(STOCK);
     expect(await db.ordersOf(ref.saleId)).toEqual([]);
   });
 
-  it('releases a jobless RESERVED entry on the second interval sweep, not the first', async () => {
+  it('leaves a fresh jobless reservation alone within ORPHAN_GRACE_MS and releases it once expired', async () => {
     const ref = await reserveInFreshSale();
-    const sweeper = newSweeper();
 
-    await sweeper.sweepOrphans(ref.saleId, 'INTERVAL');
-    const slotAfterFirst = await ledgerHarness.ledger.findSlot(ref.saleId, ref.userId);
-    await sweeper.sweepOrphans(ref.saleId, 'INTERVAL');
+    await newSweeper(START_MS + ORPHAN_GRACE_MS - 1).sweepOrphans(ref.saleId);
+    const slotWithinGrace = await ledgerHarness.ledger.findSlot(ref.saleId, ref.userId);
+    await newSweeper(START_MS + ORPHAN_GRACE_MS + 1).sweepOrphans(ref.saleId);
 
-    expect(slotAfterFirst).toEqual({ status: 'RESERVED', orderId: ref.orderId });
+    expect(slotWithinGrace).toEqual({ status: 'RESERVED', orderId: ref.orderId });
     expect(await ledgerHarness.ledger.findSlot(ref.saleId, ref.userId)).toEqual({ status: 'NONE' });
     expect(await redisStockOf(ref.saleId)).toBe(STOCK);
   });
 
-  it('keeps an entry whose job is added between two interval sweeps', async () => {
+  it('keeps an entry whose job is added before the grace window expires', async () => {
     const ref = await reserveInFreshSale();
-    const sweeper = newSweeper();
 
-    await sweeper.sweepOrphans(ref.saleId, 'INTERVAL');
+    await newSweeper(START_MS + 1_000).sweepOrphans(ref.saleId);
     await enqueuePersistence(ref);
-    const second = await sweeper.sweepOrphans(ref.saleId, 'INTERVAL');
+    const afterGrace = await newSweeper(START_MS + ORPHAN_GRACE_MS + 1).sweepOrphans(ref.saleId);
 
-    expect(second).toEqual({ pending: 1, candidates: 0, compensated: NONE_COMPENSATED });
+    expect(afterGrace).toEqual({ pending: 1, compensated: NONE_COMPENSATED });
     expect(await ledgerHarness.ledger.findSlot(ref.saleId, ref.userId)).toEqual({
       status: 'RESERVED',
       orderId: ref.orderId,

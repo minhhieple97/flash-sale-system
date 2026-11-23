@@ -9,6 +9,7 @@ import {
   SALE_CONFIG_FIELDS as F,
   flashSaleConfigKey,
   flashSaleMaintenanceLockKey,
+  flashSalePendingKey,
   flashSaleStockKey,
   flashSaleUsersKey,
   RELEASE_LOCK_REPLY,
@@ -36,6 +37,7 @@ interface SaleState {
   config: Record<string, string>;
   stock: string | null;
   users: Record<string, string>;
+  pending: string[];
   lock: string | null;
 }
 
@@ -56,6 +58,7 @@ const CASES = {
         flashSaleConfigKey(saleId),
         flashSaleStockKey(saleId),
         flashSaleUsersKey(saleId),
+        flashSalePendingKey(saleId),
         USER_ID,
         START_MS,
         ORDER_ID,
@@ -66,11 +69,13 @@ const CASES = {
     seed: async (redis, saleId) => {
       await seedOpenSale(redis, saleId, 4);
       await redis.hset(flashSaleUsersKey(saleId), USER_ID, `RESERVED:${ORDER_ID}`);
+      await redis.zadd(flashSalePendingKey(saleId), START_MS, USER_ID);
     },
     run: (redis, saleId) =>
       redis.rollbackPurchase(
         flashSaleStockKey(saleId),
         flashSaleUsersKey(saleId),
+        flashSalePendingKey(saleId),
         USER_ID,
         ORDER_ID,
       ),
@@ -80,9 +85,16 @@ const CASES = {
     seed: async (redis, saleId) => {
       await seedOpenSale(redis, saleId, 4);
       await redis.hset(flashSaleUsersKey(saleId), USER_ID, `RESERVED:${ORDER_ID}`);
+      await redis.zadd(flashSalePendingKey(saleId), START_MS, USER_ID);
     },
     run: (redis, saleId) =>
-      redis.confirmPurchase(flashSaleUsersKey(saleId), USER_ID, ORDER_ID, STORED_ORDER_ID),
+      redis.confirmPurchase(
+        flashSaleUsersKey(saleId),
+        flashSalePendingKey(saleId),
+        USER_ID,
+        ORDER_ID,
+        STORED_ORDER_ID,
+      ),
     replies: [CONFIRM_PURCHASE_REPLY.CONFIRMED, CONFIRM_PURCHASE_REPLY.CONFIRMED],
   },
   adoptOrder: {
@@ -149,6 +161,7 @@ describe('every registered sale-ledger script under a client resend', () => {
       config: await redis.hgetall(flashSaleConfigKey(saleId)),
       stock: await redis.get(flashSaleStockKey(saleId)),
       users: await redis.hgetall(flashSaleUsersKey(saleId)),
+      pending: await redis.zrange(flashSalePendingKey(saleId), 0, -1, 'WITHSCORES'),
       lock: await redis.get(flashSaleMaintenanceLockKey(saleId)),
     };
   }
@@ -166,6 +179,7 @@ describe('every registered sale-ledger script under a client resend', () => {
       flashSaleConfigKey(id),
       flashSaleStockKey(id),
       flashSaleUsersKey(id),
+      flashSalePendingKey(id),
       flashSaleMaintenanceLockKey(id),
     ]);
     if (keys.length > 0) await redis.del(...keys);

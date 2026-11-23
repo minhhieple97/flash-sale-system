@@ -12,7 +12,7 @@ import type {
   ListConfirmedBatchParams,
 } from '../../src/modules/orders/interfaces/order.interface';
 import type { OrdersService } from '../../src/modules/orders/services/orders.service';
-import type { Product } from '../../src/modules/products/interfaces/product.interface';
+import type { Product } from '../../src/modules/products/products.types';
 import type { ProductsService } from '../../src/modules/products/services/products.service';
 import type {
   ConfirmedReservation,

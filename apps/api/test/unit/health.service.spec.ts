@@ -1,19 +1,15 @@
-import { HEALTH_PROBE_TIMEOUT_MS } from '../../src/modules/health/constants/health.constants';
-import type { HealthRepository } from '../../src/modules/health/repositories/health.repository';
-import type { HealthCacheRepository } from '../../src/modules/health/repositories/health-cache.repository';
-import { HealthService } from '../../src/modules/health/services/health.service';
+import type Redis from 'ioredis';
+import type { DataSource } from 'typeorm';
+import {
+  HEALTH_PROBE_TIMEOUT_MS,
+  HealthService,
+} from '../../src/modules/health/services/health.service';
 
-type Probe = jest.Mock<Promise<boolean>, []>;
-
-function buildService(database: Probe, redis: Probe): HealthService {
+function buildService(query: () => Promise<unknown>, ping: () => Promise<string>): HealthService {
   return new HealthService(
-    { isDatabaseReachable: database } as unknown as HealthRepository,
-    { isRedisReachable: redis } as unknown as HealthCacheRepository,
+    { query: jest.fn(query) } as unknown as DataSource,
+    { ping: jest.fn(ping) } as unknown as Redis,
   );
-}
-
-function probe(result: () => Promise<boolean>): Probe {
-  return jest.fn<Promise<boolean>, []>(result);
 }
 
 describe('HealthService', () => {
@@ -23,8 +19,8 @@ describe('HealthService', () => {
 
   it('reports ok when both probes are up', async () => {
     const service = buildService(
-      probe(async () => true),
-      probe(async () => true),
+      async () => [{ '?column?': 1 }],
+      async () => 'PONG',
     );
 
     const report = await service.check();
@@ -34,10 +30,10 @@ describe('HealthService', () => {
 
   it('reports error with database down when the database probe rejects', async () => {
     const service = buildService(
-      probe(async () => {
+      async () => {
         throw new Error('connection refused');
-      }),
-      probe(async () => true),
+      },
+      async () => 'PONG',
     );
 
     const report = await service.check();
@@ -45,10 +41,10 @@ describe('HealthService', () => {
     expect(report).toEqual({ status: 'error', checks: { database: 'down', redis: 'up' } });
   });
 
-  it('reports redis down when the redis probe returns false', async () => {
+  it('reports redis down when the redis probe does not reply PONG', async () => {
     const service = buildService(
-      probe(async () => true),
-      probe(async () => false),
+      async () => [{ '?column?': 1 }],
+      async () => 'UNEXPECTED',
     );
 
     const report = await service.check();
@@ -59,8 +55,8 @@ describe('HealthService', () => {
   it('reports down for a probe that never settles once the timeout elapses', async () => {
     jest.useFakeTimers();
     const service = buildService(
-      probe(() => new Promise<boolean>(() => undefined)),
-      probe(async () => true),
+      () => new Promise<unknown>(() => undefined),
+      async () => 'PONG',
     );
 
     const pending = service.check();
@@ -73,8 +69,8 @@ describe('HealthService', () => {
   it('clears the probe timer when the probe settles', async () => {
     jest.useFakeTimers();
     const service = buildService(
-      probe(async () => true),
-      probe(async () => true),
+      async () => [{ '?column?': 1 }],
+      async () => 'PONG',
     );
 
     await service.check();

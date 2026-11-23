@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 import { ProductEntity } from '../entities/product.entity';
-import type { Product } from '../interfaces/product.interface';
+import type { Product } from '../products.types';
 
 const INSERT_PRODUCT_IF_ABSENT_SQL = `
   INSERT INTO products (id, sku, name, description, original_price_cents, sale_price_cents, image_url)

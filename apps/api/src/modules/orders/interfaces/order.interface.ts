@@ -3,7 +3,6 @@ import type {
   ConfirmedReservation,
   ConfirmOutcome,
   ReleaseOutcome,
-  ReservationRef,
   ReservationSlot,
 } from '../../sale-ledger';
 
@@ -47,18 +46,8 @@ export interface PersistOrderResult {
 
 export type PersistRejectionReason = 'STOCK_INVARIANT_VIOLATION' | 'SALE_NOT_FOUND';
 
-export type SweepTrigger = 'BOOT' | 'INTERVAL';
-
-export type OrphanStrikes = ReadonlyMap<string, number>;
-
-export interface SweepDecision {
-  toCompensate: readonly ReservationRef[];
-  nextStrikes: OrphanStrikes;
-}
-
 export interface OrphanSweepSummary {
   pending: number;
-  candidates: number;
   compensated: Record<CompensationOutcome, number>;
 }
 

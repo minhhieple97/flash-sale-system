@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { jsonResponse, stubFetch, textResponse } from '../../test-support/fetch-stub';
-import { requestJson } from '../api/http-client';
-import { FALLBACK_ERROR_MESSAGE, NETWORK_ERROR_CODE } from '../constants/api.constants';
+import { FALLBACK_ERROR_MESSAGE, NETWORK_ERROR_CODE, requestJson } from '../api/http-client';
 
 afterEach(() => {
   vi.unstubAllGlobals();

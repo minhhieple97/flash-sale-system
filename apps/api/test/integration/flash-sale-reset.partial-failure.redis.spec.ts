@@ -89,19 +89,4 @@ describe('FlashSaleResetService failing after it started', () => {
 
     expect(await readTotals()).toEqual(sameSale(5));
   });
-
-  it('heals split api+worker partial failure via restoreIfLost when replaceState fails after PG commits', async () => {
-    await seedTwoOrders(5);
-    jest.spyOn(h.ledger, 'replaceState').mockRejectedValueOnce(new Error('redis blip'));
-
-    await expect(h.resetService.reset({ totalStock: 2, ...OPEN_WINDOW })).rejects.toThrow(
-      'redis blip',
-    );
-    expect(await h.ledger.isIntact(ACTIVE_FLASH_SALE_ID)).toBe(false);
-
-    jest.spyOn(h.resetService, 'completePendingReset').mockResolvedValueOnce('NONE');
-    await h.maintenance.tick();
-
-    expect(await readTotals()).toEqual(sameSale(2));
-  });
 });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AsyncState } from '@/shared/types/async-state.types';
+import type { AsyncState } from '@/shared/types/common.types';
 import { fetchOrderStatus } from '../api/orders.api';
 import type { OrderLookupHandle, OrderStatus } from '../types/orders.types';
 

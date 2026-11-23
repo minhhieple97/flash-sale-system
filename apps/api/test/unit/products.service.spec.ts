@@ -4,9 +4,9 @@ import {
   FEATURED_PRODUCT_CACHE_TTL_MS,
   FEATURED_PRODUCT_ID,
   FEATURED_PRODUCT_SEED,
+  type Product,
   STALE_PRODUCT_FALLBACK_TTL_MS,
-} from '../../src/modules/products/constants/products.constants';
-import type { Product } from '../../src/modules/products/interfaces/product.interface';
+} from '../../src/modules/products/products.types';
 import type { ProductsRepository } from '../../src/modules/products/repositories/products.repository';
 import { ProductsService } from '../../src/modules/products/services/products.service';
 

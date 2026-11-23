@@ -7,10 +7,14 @@ import {
 } from '@/modules/orders';
 import { Card } from '@/shared/components/Card';
 import { UserIdField } from '@/shared/components/UserIdField';
-import { BUY_DISABLED_REASON, BUY_DISABLED_REASON_UNKNOWN } from '../constants/checkout.constants';
+import {
+  BUY_DISABLED_REASON,
+  BUY_DISABLED_REASON_UNKNOWN,
+  TEST_USER_ID_PREFIX,
+  TEST_USER_ID_SUFFIX_LENGTH,
+} from '../constants/checkout.constants';
 import { usePurchaseAttempt } from '../hooks/use-purchase-attempt';
 import type { PurchaseAttemptState } from '../types/checkout.types';
-import { generateTestUserId } from '../utils/test-user-id.util';
 import { CheckoutActions } from './CheckoutActions';
 import { CheckoutFeedbackBanner } from './CheckoutFeedbackBanner';
 
@@ -19,24 +23,20 @@ interface CheckoutFormCardProps {
   onPurchaseReserved?: () => void;
 }
 
-interface PurchaseReservedNotifierParams {
-  state: PurchaseAttemptState;
-  phase: ConfirmationState['phase'];
-  onPurchaseReserved?: () => void;
+function generateTestUserId(): string {
+  const hex = crypto.randomUUID().replaceAll('-', '');
+  return TEST_USER_ID_PREFIX + hex.slice(0, TEST_USER_ID_SUFFIX_LENGTH);
 }
 
-function usePurchaseReservedNotifier({
-  state,
-  phase,
-  onPurchaseReserved,
-}: PurchaseReservedNotifierParams): void {
+function usePurchaseReservedNotifier(
+  state: PurchaseAttemptState,
+  phase: ConfirmationState['phase'],
+  onPurchaseReserved?: () => void,
+): void {
   const callbackRef = useRef(onPurchaseReserved);
   const handledStateRef = useRef<PurchaseAttemptState | null>(null);
   const previousPhaseRef = useRef<ConfirmationState['phase']>(phase);
-
-  useEffect(() => {
-    callbackRef.current = onPurchaseReserved;
-  }, [onPurchaseReserved]);
+  callbackRef.current = onPurchaseReserved;
 
   useEffect(() => {
     if (state === handledStateRef.current) return;
@@ -70,7 +70,7 @@ export function CheckoutFormCard({
   const { state, lastResult, submit } = usePurchaseAttempt();
   const feedbackState = state.status === 'loading' && lastResult ? lastResult : state;
   const confirmation = useOrderConfirmationPoller(toPendingReservation(feedbackState));
-  usePurchaseReservedNotifier({ state, phase: confirmation.phase, onPurchaseReserved });
+  usePurchaseReservedNotifier(state, confirmation.phase, onPurchaseReserved);
   const saleState = useEffectiveSaleState(sale);
   const reason = disabledReason(saleState);
   const isSubmitting = state.status === 'loading';
