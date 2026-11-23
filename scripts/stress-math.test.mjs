@@ -167,3 +167,31 @@ describe('buildRequestHeaders', () => {
     }
   });
 });
+
+describe('SCENARIOS.mixed user distribution', () => {
+  test('races duplicate userIds within the opening concurrency wave while preserving 2000x3 histogram', () => {
+    const { requests, concurrency, userIdFor, expected } = SCENARIOS.mixed;
+    const firstWave = Array.from({ length: concurrency }, (_, i) => userIdFor(i));
+    assert.ok(
+      new Set(firstWave).size < concurrency,
+      'expected duplicate userIds inside opening concurrency wave',
+    );
+
+    const histogram = new Map();
+    for (let i = 0; i < requests; i += 1) {
+      const id = userIdFor(i);
+      histogram.set(id, (histogram.get(id) ?? 0) + 1);
+    }
+    assert.equal(histogram.size, 2000);
+    for (const count of histogram.values()) {
+      assert.equal(count, 3);
+    }
+    assert.equal(expected.reserved_202 + expected.conflict_409 + expected.sold_out_410, requests);
+  });
+
+  test('realisticMix expected counts match total requests and exceed 10000 for full window overlap', () => {
+    const { requests, expected } = SCENARIOS.realisticMix;
+    assert.ok(requests >= 15_000, `expected realisticMix requests >= 15000, got ${requests}`);
+    assert.equal(expected.reserved_202 + expected.sold_out_410, requests);
+  });
+});

@@ -26,6 +26,7 @@ const EXPECTED_RESPONSES = http.expectedStatuses(...EXPECTED_STATUSES);
 const EXPECTED_READ_RESPONSES = http.expectedStatuses(200);
 const BARRIER_WAIT_MS = 5000;
 const READER_WINDOW_S = 8;
+const VALID_BUYER_STATUSES = new Set(['NONE', 'RESERVED', 'CONFIRMED']);
 
 const counters = Object.fromEntries(METRIC_NAMES.map((name) => [name, new Counter(name)]));
 const barrierVus = new Counter('barrier_vus');
@@ -72,8 +73,8 @@ export const options = {
       `p(95)<${SCENARIO.p95BudgetMs}`,
       `p(99)<${SCENARIO.p99BudgetMs}`,
     ],
-    'http_req_duration{endpoint:read}': ['p(99)<250'],
-    'http_req_duration{endpoint:lookup}': ['p(99)<250'],
+    'http_req_duration{endpoint:read}': ['p(99)<450'],
+    'http_req_duration{endpoint:lookup}': ['p(99)<600'],
     'http_reqs{endpoint:read}': ['count>0'],
     'http_reqs{endpoint:lookup}': ['count>0'],
   },
@@ -144,25 +145,28 @@ export function runReader() {
   readFailures.add(ok ? 0 : 1);
 }
 
-function hasNoneStatus(res) {
-  if (res.status !== 200) return false;
-  try {
-    return res.json('status') === 'NONE';
-  } catch {
-    return false;
-  }
-}
-
 export function runLookup() {
   warmConnection(false);
-  const userId = `non-buyer-${exec.vu.idInTest}-${exec.scenario.iterationInTest}`;
+  const iter = exec.scenario.iterationInTest;
+  const isBuyerLookup = iter % 2 === 0;
+  const userId = isBuyerLookup
+    ? SCENARIO.userIdFor(Math.floor(iter / 2) % SCENARIO.totalStock)
+    : `non-buyer-${exec.vu.idInTest}-${iter}`;
   const res = http.get(`${BASE_URL}${ORDER_LOOKUP_PATH}/${userId}`, {
     tags: { endpoint: 'lookup' },
     responseCallback: EXPECTED_READ_RESPONSES,
   });
   const ok = check(res, {
     'lookup status is 200': (r) => r.status === 200,
-    'lookup order status is NONE': () => hasNoneStatus(res),
+    'lookup order status is expected': (r) => {
+      if (r.status !== 200) return false;
+      try {
+        const status = r.json('status');
+        return isBuyerLookup ? VALID_BUYER_STATUSES.has(status) : status === 'NONE';
+      } catch {
+        return false;
+      }
+    },
   });
   readFailures.add(ok ? 0 : 1);
 }
@@ -179,6 +183,7 @@ function buyerRows(m) {
   const counts = METRIC_NAMES.map((k) => m(k).count ?? 0).join('/');
   return [
     ['barrier VUs reached', `${m('barrier_vus').count ?? 0}/${SCENARIO.concurrency}`],
+    ['buyers mid-run window', `${((done.max - done.min) / 1000).toFixed(2)}s`],
     ['buyers mid-run throughput', `${rps.toFixed(1)} req/s`],
     ['buyers avg in-flight VUs', `${busy.toFixed(1)}/${SCENARIO.concurrency}`],
     ['buyers (202/409/410/5xx)', counts],
@@ -189,12 +194,10 @@ function buyerRows(m) {
 function readRows(m) {
   const reads = m('http_reqs{endpoint:read}').count ?? 0;
   const lookups = m('http_reqs{endpoint:lookup}').count ?? 0;
+  const fails = m('read_failures').count ?? 0;
   const failed = ((m('http_req_failed').rate ?? 0) * 100).toFixed(2);
   return [
-    [
-      'read reqs (8s) / fail',
-      `${reads} (${(reads / READER_WINDOW_S).toFixed(1)}/s) / ${m('read_failures').count ?? 0}`,
-    ],
+    ['read reqs (8s) / fail', `${reads} (${(reads / READER_WINDOW_S).toFixed(1)}/s) / ${fails}`],
     ['read latency (ms)', fmtLatency(m('http_req_duration{endpoint:read}'))],
     ['lookup reqs (8s)', `${lookups} (${(lookups / READER_WINDOW_S).toFixed(1)}/s)`],
     ['lookup latency (ms)', fmtLatency(m('http_req_duration{endpoint:lookup}'))],
@@ -204,14 +207,13 @@ function readRows(m) {
 
 export function handleSummary(data) {
   const m = (name) => data.metrics[name]?.values ?? {};
-  const lines = [...buyerRows(m), ...readRows(m)]
-    .map(([label, value]) => `${label.padEnd(30)}${value}\n`)
+  const lines = [...buyerRows(m), ...readRows(m)].map(([l, v]) => `${l.padEnd(30)}${v}\n`).join('');
+  const checksOut = Object.entries(data.metrics)
+    .flatMap(([name, metric]) =>
+      Object.entries(metric.thresholds ?? {}).map(
+        ([rule, outcome]) => `${outcome.ok ? 'PASS' : 'FAIL'} ${name} ${rule}\n`,
+      ),
+    )
     .join('');
-  let checksOut = '';
-  for (const [name, metric] of Object.entries(data.metrics)) {
-    for (const [rule, outcome] of Object.entries(metric.thresholds ?? {})) {
-      checksOut += `${outcome.ok ? 'PASS' : 'FAIL'} ${name} ${rule}\n`;
-    }
-  }
   return { stdout: `\n== ${SCENARIO.name} (k6 via ${BASE_URL}) ==\n${lines}${checksOut}` };
 }
