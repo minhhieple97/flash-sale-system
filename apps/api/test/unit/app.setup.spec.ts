@@ -63,11 +63,12 @@ describe('configureApp', () => {
     expect(prefixedMetrics.status).toBe(404);
   });
 
-  it('attaches security headers to both success and error responses', async () => {
+  it('attaches security headers once to success, JSON POST, and error responses', async () => {
     const ok = await request(app.getHttpServer()).get('/metrics');
+    const echoed = await request(app.getHttpServer()).post('/api/v1/echo').send({ text: 'ok' });
     const missing = await request(app.getHttpServer()).get('/does-not-exist');
 
-    for (const response of [ok, missing]) {
+    for (const response of [ok, echoed, missing]) {
       expect(response.headers['x-content-type-options']).toBe('nosniff');
       expect(response.headers['x-frame-options']).toBe('DENY');
       expect(response.headers['referrer-policy']).toBe('no-referrer');

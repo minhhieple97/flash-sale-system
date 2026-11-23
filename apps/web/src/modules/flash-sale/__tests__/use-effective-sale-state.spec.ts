@@ -1,12 +1,12 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { COUNTDOWN_TICK_MS } from '../constants/flash-sale.constants';
 import { useEffectiveSaleState } from '../hooks/use-effective-sale-state';
 import type { FlashSaleStatus, SaleState } from '../types/flash-sale.types';
 import { buildSale, HOUR_MS, isoAt, SERVER_NOW } from './flash-sale-fixtures';
 
 const STARTS_IN_MS = 10_000;
 const WINDOW_MS = 60_000;
+const DAY_MS = 86_400_000;
 
 function upcomingSale(): FlashSaleStatus {
   return buildSale({
@@ -72,20 +72,84 @@ describe.each([
     expect(state.current()).toBe('ACTIVE');
   });
 
-  it('turns ENDED on the first tick after endsAt', () => {
+  it('turns ENDED immediately at 1 ms after endsAt without idle polling', () => {
     const state = renderAtSkew(activeSale(), skewMs);
 
-    advance(STARTS_IN_MS + COUNTDOWN_TICK_MS);
+    advance(STARTS_IN_MS + 1);
 
     expect(state.current()).toBe('ENDED');
   });
 
-  it('passes SOLD_OUT through even after endsAt', () => {
-    const state = renderAtSkew(buildSale({ saleState: 'SOLD_OUT', endsAt: isoAt(1000) }), skewMs);
+  it('transitions UPCOMING -> SOLD_OUT at startsAt when remainingStock is zero', () => {
+    const sale = buildSale({
+      saleState: 'UPCOMING',
+      remainingStock: 0,
+      startsAt: isoAt(STARTS_IN_MS),
+      endsAt: isoAt(STARTS_IN_MS + WINDOW_MS),
+    });
+    const state = renderAtSkew(sale, skewMs);
 
-    advance(5000);
-
+    advance(STARTS_IN_MS - 1);
+    expect(state.current()).toBe('UPCOMING');
+    advance(1);
     expect(state.current()).toBe('SOLD_OUT');
+  });
+
+  it('transitions SOLD_OUT -> ENDED past endsAt', () => {
+    const sale = buildSale({
+      saleState: 'SOLD_OUT',
+      remainingStock: 0,
+      endsAt: isoAt(1000),
+    });
+    const state = renderAtSkew(sale, skewMs);
+
+    advance(1000);
+    expect(state.current()).toBe('SOLD_OUT');
+    advance(1);
+    expect(state.current()).toBe('ENDED');
+  });
+});
+
+describe('useEffectiveSaleState boundary scheduling', () => {
+  it('does not rerender on a 250ms interval while waiting for the next boundary', () => {
+    vi.setSystemTime(SERVER_NOW);
+    const sale = upcomingSale();
+    const render = vi.fn(() => useEffectiveSaleState(sale));
+    renderHook(render);
+    const initialRenders = render.mock.calls.length;
+
+    advance(STARTS_IN_MS - 1);
+
+    expect(render).toHaveBeenCalledTimes(initialRenders);
+  });
+
+  it('clamps and re-arms cleanly when the boundary is longer than 2^31 - 1 ms', () => {
+    vi.setSystemTime(SERVER_NOW);
+    const sale = buildSale({
+      saleState: 'UPCOMING',
+      startsAt: isoAt(30 * DAY_MS),
+      endsAt: isoAt(31 * DAY_MS),
+    });
+    const { result } = renderHook(() => useEffectiveSaleState(sale));
+
+    advance(25 * DAY_MS);
+    expect(result.current).toBe('UPCOMING');
+    advance(5 * DAY_MS);
+    expect(result.current).toBe('ACTIVE');
+  });
+
+  it('schedules no timer once the sale has already ended', () => {
+    vi.setSystemTime(SERVER_NOW);
+    const sale = buildSale({
+      saleState: 'ENDED',
+      startsAt: isoAt(-2 * HOUR_MS),
+      endsAt: isoAt(-HOUR_MS),
+    });
+
+    const { result } = renderHook(() => useEffectiveSaleState(sale));
+
+    expect(result.current).toBe('ENDED');
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 

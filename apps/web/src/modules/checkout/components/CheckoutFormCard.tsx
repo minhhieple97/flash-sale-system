@@ -1,6 +1,10 @@
 import { type FormEvent, type ReactElement, useEffect, useRef, useState } from 'react';
 import { type FlashSaleStatus, type SaleState, useEffectiveSaleState } from '@/modules/flash-sale';
-import { type ConfirmationState, useOrderConfirmationPoller } from '@/modules/orders';
+import {
+  type ConfirmationState,
+  type PendingReservation,
+  useOrderConfirmationPoller,
+} from '@/modules/orders';
 import { Card } from '@/shared/components/Card';
 import { UserIdField } from '@/shared/components/UserIdField';
 import { BUY_DISABLED_REASON, BUY_DISABLED_REASON_UNKNOWN } from '../constants/checkout.constants';
@@ -53,6 +57,11 @@ function disabledReason(saleState: SaleState | null): string | null {
   return saleState === null ? BUY_DISABLED_REASON_UNKNOWN : BUY_DISABLED_REASON[saleState];
 }
 
+function toPendingReservation(state: PurchaseAttemptState): PendingReservation | null {
+  if (state.status !== 'success') return null;
+  return { userId: state.data.userId, orderId: state.data.orderId };
+}
+
 export function CheckoutFormCard({
   sale,
   onPurchaseReserved,
@@ -60,9 +69,7 @@ export function CheckoutFormCard({
   const [userId, setUserId] = useState('');
   const { state, lastResult, submit } = usePurchaseAttempt();
   const feedbackState = state.status === 'loading' && lastResult ? lastResult : state;
-  const confirmation = useOrderConfirmationPoller(
-    feedbackState.status === 'success' ? feedbackState.data.userId : null,
-  );
+  const confirmation = useOrderConfirmationPoller(toPendingReservation(feedbackState));
   usePurchaseReservedNotifier({ state, phase: confirmation.phase, onPurchaseReserved });
   const saleState = useEffectiveSaleState(sale);
   const reason = disabledReason(saleState);

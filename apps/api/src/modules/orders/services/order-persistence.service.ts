@@ -43,9 +43,8 @@ export class OrderPersistenceService implements OnApplicationBootstrap, OnModule
     @Optional() private readonly metrics?: MetricsService,
   ) {}
 
-  /** The pause is global and stored in Redis: a reset that crashed before its resume would keep it. */
-  async onApplicationBootstrap(): Promise<void> {
-    await this.queue.resume();
+  /** Queue resume is fenced under the distributed maintenance lease in LedgerMaintenanceService. */
+  onApplicationBootstrap(): void {
     this.metrics?.registerQueueCollector(() =>
       this.queue.getJobCounts('waiting', 'active', 'delayed', 'failed'),
     );

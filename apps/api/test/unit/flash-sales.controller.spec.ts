@@ -47,12 +47,13 @@ describe('FlashSalesController', () => {
     await app.close();
   });
 
-  it('maps epoch milliseconds to ISO-8601 strings', async () => {
+  it('maps epoch milliseconds to ISO-8601 strings and disables caching', async () => {
     getCurrentStatus.mockResolvedValue(STATUS);
 
     const response = await request(app.getHttpServer()).get('/api/v1/flash-sales/current');
 
     expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toBe('no-store');
     expect(response.body).toMatchObject({
       startsAt: '2030-01-01T00:00:00.000Z',
       endsAt: '2030-01-01T01:00:00.000Z',

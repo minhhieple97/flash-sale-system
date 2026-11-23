@@ -14,12 +14,7 @@ import { OrdersService } from './services/orders.service';
 import { OrphanSweeper } from './services/orphan-sweeper.service';
 
 @Module({
-  imports: [
-    CommonModule,
-    SaleLedgerModule,
-    MetricsModule,
-    BullModule.registerQueue({ name: ORDER_PERSISTENCE_QUEUE }),
-  ],
+  imports: [CommonModule, SaleLedgerModule, MetricsModule],
   providers: [
     orderPersistenceProducerProvider,
     OrdersRepository,
@@ -34,8 +29,14 @@ export class OrdersCoreModule {}
 @Module({})
 class OrdersRoleModule {}
 
+const ORDERS_WORKER_IMPORTS = [
+  CommonModule,
+  OrdersCoreModule,
+  BullModule.registerQueue({ name: ORDER_PERSISTENCE_QUEUE }),
+];
+
 @Module({
-  imports: [CommonModule, OrdersCoreModule],
+  imports: ORDERS_WORKER_IMPORTS,
   controllers: [OrdersController],
   providers: [OrderPersistenceProcessor],
   exports: [OrdersCoreModule],
@@ -45,7 +46,7 @@ export class OrdersModule {
   static forRole(role: AppRole): DynamicModule {
     return {
       module: OrdersRoleModule,
-      imports: [CommonModule, OrdersCoreModule],
+      imports: role === 'api' ? [CommonModule, OrdersCoreModule] : ORDERS_WORKER_IMPORTS,
       controllers: role === 'worker' ? [] : [OrdersController],
       providers: role === 'api' ? [] : [OrderPersistenceProcessor],
       exports: [OrdersCoreModule],

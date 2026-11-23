@@ -15,7 +15,7 @@ if held == ${CONFIRMED_ENTRY} then return ${REPLY.ADOPTED} end
 if held then return ${REPLY.NOT_ADOPTED} end
 
 local stock = tonumber(redis.call('GET', KEYS[1]))
-if stock == nil or stock <= 0 then return ${REPLY.NOT_ADOPTED} end
+if stock == nil then return ${REPLY.NOT_ADOPTED} end
 
 redis.call('DECR', KEYS[1])
 redis.call('HSET', KEYS[2], ARGV[1], ${CONFIRMED_ENTRY})

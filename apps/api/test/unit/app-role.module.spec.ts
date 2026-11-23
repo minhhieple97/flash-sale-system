@@ -1,7 +1,16 @@
+import { getQueueToken } from '@nestjs/bullmq';
 import type { DynamicModule, Type } from '@nestjs/common';
+import type { ConfigService } from '@nestjs/config';
 import { ModulesContainer } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import type { AppModule as AppModuleType } from '../../src/app.module';
+import type { AppEnv } from '../../src/config/env.interface';
+import {
+  API_DATABASE_POOL_MAX,
+  DATABASE_POOL_MAX,
+} from '../../src/infrastructure/database/database.constants';
+import { buildPostgresOptions } from '../../src/infrastructure/database/database.module';
+import { ORDER_PERSISTENCE_QUEUE } from '../../src/infrastructure/queue/queue.constants';
 import { AdminModule } from '../../src/modules/admin/admin.module';
 import {
   BOOTSTRAP_SWEEP_TRIGGER,
@@ -13,11 +22,13 @@ import { AdminFlashSaleController } from '../../src/modules/admin/controllers/ad
 import { FlashSaleHydrationService } from '../../src/modules/admin/services/flash-sale-hydration.service';
 import { LedgerMaintenanceService } from '../../src/modules/admin/services/ledger-maintenance.service';
 import { CheckoutController } from '../../src/modules/checkout/controllers/checkout.controller';
+import { FlashSalesController } from '../../src/modules/flash-sales/controllers/flash-sales.controller';
 import { HealthController } from '../../src/modules/health/controllers/health.controller';
 import { MetricsController } from '../../src/modules/metrics/controllers/metrics.controller';
 import { OrdersController } from '../../src/modules/orders/controllers/orders.controller';
 import { OrdersModule } from '../../src/modules/orders/orders.module';
 import { OrderPersistenceProcessor } from '../../src/modules/orders/processors/order-persistence.processor';
+import { ProductsController } from '../../src/modules/products/controllers/products.controller';
 
 const TEST_ENV: Readonly<Record<string, string>> = {
   POSTGRES_HOST: 'localhost',
@@ -74,15 +85,20 @@ describe('APP_ROLE module split', () => {
     }
   });
 
+  const orderQueueToken = getQueueToken(ORDER_PERSISTENCE_QUEUE);
+
   it('keeps static AppModule equivalent to role "all"', async () => {
     const graph = await inspectModule(AppModule);
 
+    expect(graph.controllers.has(ProductsController)).toBe(true);
+    expect(graph.controllers.has(FlashSalesController)).toBe(true);
     expect(graph.controllers.has(CheckoutController)).toBe(true);
     expect(graph.controllers.has(OrdersController)).toBe(true);
     expect(graph.controllers.has(AdminFlashSaleController)).toBe(true);
     expect(graph.controllers.has(HealthController)).toBe(true);
     expect(graph.controllers.has(MetricsController)).toBe(true);
     expect(graph.providers.has(OrderPersistenceProcessor)).toBe(true);
+    expect(graph.providers.has(orderQueueToken)).toBe(true);
     expect(graph.providers.has(LedgerMaintenanceService)).toBe(true);
     expect(graph.maintenanceInterval).toBe(LEDGER_MAINTENANCE_INTERVAL_MS);
     expect(graph.bootstrapSweepTrigger).toBe('BOOT');
@@ -91,37 +107,46 @@ describe('APP_ROLE module split', () => {
   it('builds AppModule.forRole("all") with all controllers, processor and maintenance interval', async () => {
     const graph = await inspectModule(AppModule.forRole('all'));
 
+    expect(graph.controllers.has(ProductsController)).toBe(true);
+    expect(graph.controllers.has(FlashSalesController)).toBe(true);
     expect(graph.controllers.has(CheckoutController)).toBe(true);
     expect(graph.controllers.has(OrdersController)).toBe(true);
     expect(graph.controllers.has(AdminFlashSaleController)).toBe(true);
     expect(graph.controllers.has(MetricsController)).toBe(true);
     expect(graph.providers.has(OrderPersistenceProcessor)).toBe(true);
+    expect(graph.providers.has(orderQueueToken)).toBe(true);
     expect(graph.maintenanceInterval).toBe(LEDGER_MAINTENANCE_INTERVAL_MS);
     expect(graph.bootstrapSweepTrigger).toBe('BOOT');
   });
 
-  it('builds AppModule.forRole("api") without OrderPersistenceProcessor and with maintenance disabled', async () => {
+  it('builds AppModule.forRole("api") without OrderPersistenceProcessor, BullModule queue, or maintenance', async () => {
     const graph = await inspectModule(AppModule.forRole('api'));
 
+    expect(graph.controllers.has(ProductsController)).toBe(true);
+    expect(graph.controllers.has(FlashSalesController)).toBe(true);
     expect(graph.controllers.has(CheckoutController)).toBe(true);
     expect(graph.controllers.has(OrdersController)).toBe(true);
     expect(graph.controllers.has(AdminFlashSaleController)).toBe(true);
     expect(graph.controllers.has(HealthController)).toBe(true);
     expect(graph.controllers.has(MetricsController)).toBe(true);
     expect(graph.providers.has(OrderPersistenceProcessor)).toBe(false);
+    expect(graph.providers.has(orderQueueToken)).toBe(false);
     expect(graph.maintenanceInterval).toBe(MAINTENANCE_DISABLED);
     expect(graph.bootstrapSweepTrigger).toBeNull();
   });
 
-  it('builds AppModule.forRole("worker") without write/admin/orders controllers and with processor + maintenance', async () => {
+  it('builds AppModule.forRole("worker") without storefront/write/admin/orders controllers and with processor + maintenance', async () => {
     const graph = await inspectModule(AppModule.forRole('worker'));
 
+    expect(graph.controllers.has(ProductsController)).toBe(false);
+    expect(graph.controllers.has(FlashSalesController)).toBe(false);
     expect(graph.controllers.has(CheckoutController)).toBe(false);
     expect(graph.controllers.has(OrdersController)).toBe(false);
     expect(graph.controllers.has(AdminFlashSaleController)).toBe(false);
     expect(graph.controllers.has(HealthController)).toBe(true);
     expect(graph.controllers.has(MetricsController)).toBe(true);
     expect(graph.providers.has(OrderPersistenceProcessor)).toBe(true);
+    expect(graph.providers.has(orderQueueToken)).toBe(true);
     expect(graph.providers.has(LedgerMaintenanceService)).toBe(true);
     expect(graph.providers.has(FlashSaleHydrationService)).toBe(true);
     expect(graph.maintenanceInterval).toBe(LEDGER_MAINTENANCE_INTERVAL_MS);
@@ -133,4 +158,26 @@ describe('APP_ROLE module split', () => {
     expect(OrdersModule.forRole('worker').controllers).toEqual([]);
     expect(AdminModule.forRole('worker').controllers).toEqual([]);
   });
+
+  it.each([
+    ['api', undefined, API_DATABASE_POOL_MAX],
+    ['worker', undefined, DATABASE_POOL_MAX],
+    ['all', undefined, DATABASE_POOL_MAX],
+    ['api', 12, 12],
+  ] as const)(
+    'resolves Postgres pool max for role=%s and DATABASE_POOL_MAX=%s to %s',
+    (role, poolMaxOverride, expectedMax) => {
+      const env: Partial<AppEnv> = {
+        ...TEST_ENV,
+        POSTGRES_PORT: 5432,
+        APP_ROLE: role,
+        DATABASE_POOL_MAX: poolMaxOverride,
+      };
+      const config = { get: (key: keyof AppEnv) => env[key] } as ConfigService<AppEnv, true>;
+
+      const options = buildPostgresOptions(config);
+
+      expect((options.extra as { max: number }).max).toBe(expectedMax);
+    },
+  );
 });

@@ -17,6 +17,11 @@ export type ConfirmationState =
   | { phase: 'released' }
   | { phase: 'timed-out' };
 
+export interface PendingReservation {
+  readonly userId: string;
+  readonly orderId: string;
+}
+
 export interface OrderLookupHandle {
   state: AsyncState<OrderStatus>;
   lookup: (userId: string) => Promise<void>;

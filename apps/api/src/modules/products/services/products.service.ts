@@ -7,6 +7,7 @@ import {
   FEATURED_PRODUCT_SEED,
   PRODUCT_ERROR_CODES,
   PRODUCT_NOT_FOUND_MESSAGE,
+  STALE_PRODUCT_FALLBACK_TTL_MS,
 } from '../constants/products.constants';
 import type { FeaturedProductCacheEntry, Product } from '../interfaces/product.interface';
 import { ProductsRepository } from '../repositories/products.repository';
@@ -50,13 +51,19 @@ export class ProductsService {
       if (isCurrent()) this.lastKnownProduct = product;
       return product;
     } catch (error: unknown) {
-      if (isCurrent()) this.entry = null;
       if (isDatabaseUnavailable(error) && this.lastKnownProduct !== null) {
+        if (isCurrent()) {
+          this.entry = {
+            product: Promise.resolve(this.lastKnownProduct),
+            expiresAtMs: this.clock.nowMs() + STALE_PRODUCT_FALLBACK_TTL_MS,
+          };
+        }
         this.logger.warn(
           `Database unavailable while loading featured product; serving stale cached copy: ${String(error)}`,
         );
         return this.lastKnownProduct;
       }
+      if (isCurrent()) this.entry = null;
       throw error;
     }
   }

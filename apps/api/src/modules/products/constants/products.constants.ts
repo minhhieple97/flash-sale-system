@@ -14,6 +14,7 @@ export const FEATURED_PRODUCT_SEED: Readonly<Product> = {
 export const PRODUCT_ERROR_CODES = { PRODUCT_NOT_FOUND: 'PRODUCT_NOT_FOUND' } as const;
 export const PRODUCT_NOT_FOUND_MESSAGE = 'Featured product not found';
 export const FEATURED_PRODUCT_CACHE_TTL_MS = 60_000;
+export const STALE_PRODUCT_FALLBACK_TTL_MS = 5_000;
 export const FEATURED_PRODUCT_CACHE_CONTROL = 'public, max-age=60, stale-while-revalidate=300';
 export const PRODUCTS_ROUTE = 'products';
 export const FEATURED_PRODUCT_ROUTE = 'featured';

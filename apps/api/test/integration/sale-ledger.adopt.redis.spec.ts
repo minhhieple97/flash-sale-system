@@ -57,14 +57,17 @@ describe('SaleLedgerRepository.adoptCommittedOrder', () => {
     expect((await readUnits(saleId)).stock).toBe('1');
   });
 
-  it('writes nothing when the stock is already 0', async () => {
+  it('confirms the committed order and decrements stock below zero when stock is already 0', async () => {
     const saleId = await harness.seedSale(0);
     const order = committedOrder(saleId);
 
     const outcome = await harness.ledger.adoptCommittedOrder(order);
 
-    expect(outcome).toBe('NOT_ADOPTED');
-    expect(await readUnits(saleId)).toEqual({ stock: '0', users: {} });
+    expect(outcome).toBe('ADOPTED');
+    expect(await readUnits(saleId)).toEqual({
+      stock: '-1',
+      users: { [order.userId]: `CONFIRMED:${order.orderId}` },
+    });
   });
 
   it.each([

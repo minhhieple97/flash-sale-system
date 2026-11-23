@@ -16,5 +16,7 @@ export const ACTIVE_SALE: FlashSaleStatus = {
 export const ENDED_SALE: FlashSaleStatus = {
   ...ACTIVE_SALE,
   saleState: 'ENDED',
+  startsAt: new Date(SERVER_NOW - 2 * HOUR_MS).toISOString(),
+  endsAt: new Date(SERVER_NOW - HOUR_MS).toISOString(),
   serverTime: new Date(SERVER_NOW + 1000).toISOString(),
 };

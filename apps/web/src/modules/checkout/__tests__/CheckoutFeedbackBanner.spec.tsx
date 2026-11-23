@@ -32,6 +32,7 @@ const BANNER_FOR_CODE = {
   SALE_ENDED: failure('SALE_ENDED'),
   INVALID_USER_ID: failure('INVALID_USER_ID'),
   TEMPORARY_FAILURE: failure('TEMPORARY_FAILURE'),
+  RATE_LIMITED: failure('RATE_LIMITED'),
   CONFIRMED: reserved({ phase: 'confirmed', orderId: ORDER_ID }),
   RESERVATION_RELEASED: reserved({ phase: 'released' }),
   STILL_CONFIRMING: reserved({ phase: 'timed-out' }),
@@ -67,5 +68,13 @@ describe('CheckoutFeedbackBanner', () => {
 
     expect(screen.getByText(FALLBACK_TITLE)).toBeInTheDocument();
     expect(screen.getByText('server said SOMETHING_NEW')).toBeInTheDocument();
+  });
+
+  it('renders a clear rate-limit warning for RATE_LIMITED', () => {
+    render(<CheckoutFeedbackBanner {...failure('RATE_LIMITED')} />);
+
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('Too many requests');
+    expect(alert).toHaveTextContent('server said RATE_LIMITED');
   });
 });

@@ -14,6 +14,10 @@ export const PURCHASE_FEEDBACK = {
   SALE_ENDED: { tone: 'neutral', title: 'Sale has ended' },
   INVALID_USER_ID: { tone: 'warning', title: 'Invalid user ID' },
   TEMPORARY_FAILURE: { tone: 'danger', title: 'Temporarily unavailable' },
+  RATE_LIMITED: {
+    tone: 'warning',
+    title: 'Too many requests. Please wait a moment and try again.',
+  },
   CONFIRMED: { tone: 'success', title: 'Order confirmed' },
   RESERVATION_RELEASED: { tone: 'warning', title: 'Reservation released' },
   STILL_CONFIRMING: { tone: 'info', title: 'Still confirming' },

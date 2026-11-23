@@ -93,14 +93,17 @@ describe('useFlashSaleStatus', () => {
 
   it('reports a failure with no sale when the first poll fails', async () => {
     stubFetch(async () =>
-      jsonResponse(404, { code: 'NO_SALE', message: 'No sale is configured.' }),
+      jsonResponse(404, { code: 'FLASH_SALE_NOT_FOUND', message: 'No sale is configured.' }),
     );
 
     const { result } = renderHook(() => useFlashSaleStatus());
     await advance(0);
 
     expect(result.current.sale).toBeNull();
-    expect(result.current.error).toEqual({ code: 'NO_SALE', message: 'No sale is configured.' });
+    expect(result.current.error).toEqual({
+      code: 'FLASH_SALE_NOT_FOUND',
+      message: 'No sale is configured.',
+    });
   });
 
   it('shows an applied snapshot immediately', async () => {

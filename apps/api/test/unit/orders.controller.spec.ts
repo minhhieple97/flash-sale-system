@@ -41,13 +41,14 @@ describe('OrdersController', () => {
     await app.close();
   });
 
-  it('answers with exactly the DTO keys', async () => {
+  it('answers with exactly the DTO keys and disables caching', async () => {
     const userId = userIdOf('alice');
     getUserOrderStatus.mockResolvedValue({ status: 'CONFIRMED', orderId: 'order-1', userId });
 
     const response = await request(app.getHttpServer()).get('/api/v1/orders/user/alice');
 
     expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toBe('no-store');
     expect(Object.keys(response.body).sort()).toEqual(DTO_KEYS);
   });
 

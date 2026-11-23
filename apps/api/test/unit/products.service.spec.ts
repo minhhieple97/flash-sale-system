@@ -4,6 +4,7 @@ import {
   FEATURED_PRODUCT_CACHE_TTL_MS,
   FEATURED_PRODUCT_ID,
   FEATURED_PRODUCT_SEED,
+  STALE_PRODUCT_FALLBACK_TTL_MS,
 } from '../../src/modules/products/constants/products.constants';
 import type { Product } from '../../src/modules/products/interfaces/product.interface';
 import type { ProductsRepository } from '../../src/modules/products/repositories/products.repository';
@@ -162,7 +163,7 @@ describe('ProductsService', () => {
       expect(findById).toHaveBeenCalledTimes(2);
     });
 
-    it('serves lastKnownProduct with a warning when the database is unavailable after TTL expiry', async () => {
+    it('serves lastKnownProduct with a warning and backs off for 5s when DB is unavailable', async () => {
       const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
       const nowRef = { now: 1_000 };
       const { service, findById } = buildService(PRODUCT, nowRef);
@@ -174,6 +175,10 @@ describe('ProductsService', () => {
 
       await expect(service.getFeaturedProduct()).resolves.toBe(PRODUCT);
       expect(warn).toHaveBeenCalledTimes(1);
+      nowRef.now += STALE_PRODUCT_FALLBACK_TTL_MS - 1;
+      await expect(service.getFeaturedProduct()).resolves.toBe(PRODUCT);
+      expect(findById).toHaveBeenCalledTimes(2);
+      nowRef.now += 1;
       await expect(service.getFeaturedProduct()).resolves.toBe(PRODUCT);
       expect(findById).toHaveBeenCalledTimes(3);
     });

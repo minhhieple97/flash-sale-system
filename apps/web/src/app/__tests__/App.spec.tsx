@@ -20,11 +20,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function resetSaleFor(init?: RequestInit): typeof ACTIVE_SALE {
+  const payload = JSON.parse(String(init?.body ?? '{}')) as { startsOffsetSeconds?: number };
+  return (payload.startsOffsetSeconds ?? 0) < 0 ? ENDED_SALE : ACTIVE_SALE;
+}
+
 function stubApi(getSale: () => typeof ACTIVE_SALE = () => ACTIVE_SALE): void {
-  stubFetch(async (url) => {
+  stubFetch(async (url, init) => {
     if (url.endsWith('/products/featured')) return jsonResponse(200, PRODUCT);
     if (url.endsWith('/flash-sales/current')) return jsonResponse(200, getSale());
-    if (url.endsWith('/admin/flash-sales/reset')) return jsonResponse(200, ENDED_SALE);
+    if (url.endsWith('/admin/flash-sales/reset')) return jsonResponse(200, resetSaleFor(init));
     if (url.endsWith('/checkout/purchase')) {
       return jsonResponse(202, {
         code: 'RESERVED',
@@ -77,7 +82,11 @@ describe('App', () => {
 
     await user.click(screen.getByRole('button', { name: 'Demo scenarios' }));
     await user.click(screen.getByRole('button', { name: 'Active Sale' }));
-    await screen.findByText('Ended');
+    expect(await screen.findByText(/Live scenario:/)).toHaveTextContent(
+      'Live scenario: Active Sale',
+    );
+    expect(screen.getByText('Live now')).toBeInTheDocument();
+    expect(screen.queryByText('Ended')).not.toBeInTheDocument();
 
     expect(screen.queryByText('Reserved! Confirming your order...')).not.toBeInTheDocument();
   });

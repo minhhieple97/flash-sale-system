@@ -34,15 +34,14 @@ const SWEEP: OrphanSweepSummary = {
 
 function buildService(intervalMs: MaintenanceIntervalMs = INTERVAL_MS) {
   const calls: string[] = [];
+  const recordAsync = <T>(name: string, value: T): jest.Mock<Promise<T>, []> =>
+    jest.fn(async () => {
+      calls.push(name);
+      return value;
+    });
   const lock = new SaleMutationLock();
-  const hydrate = jest.fn(async (): Promise<LedgerHydrationResult> => {
-    calls.push('hydrate');
-    return 'ALREADY_PRESENT';
-  });
-  const restoreIfLost = jest.fn(async (): Promise<LedgerHydrationResult> => {
-    calls.push('restoreIfLost');
-    return 'ALREADY_PRESENT';
-  });
+  const hydrate = recordAsync<LedgerHydrationResult>('hydrate', 'ALREADY_PRESENT');
+  const restoreIfLost = recordAsync<LedgerHydrationResult>('restoreIfLost', 'ALREADY_PRESENT');
   const sweepOrphans = jest.fn(async (saleId: string, trigger: SweepTrigger) => {
     calls.push(`sweep:${saleId === ACTIVE_FLASH_SALE_ID ? 'active' : saleId}:${trigger}`);
     return SWEEP;
@@ -50,10 +49,8 @@ function buildService(intervalMs: MaintenanceIntervalMs = INTERVAL_MS) {
   const invalidateCache = jest.fn(() => {
     calls.push('invalidateCache');
   });
-  const completePendingReset = jest.fn(async (): Promise<PendingResetOutcome> => {
-    calls.push('completePendingReset');
-    return 'NONE';
-  });
+  const completePendingReset = recordAsync<PendingResetOutcome>('completePendingReset', 'NONE');
+  const resumeProcessing = recordAsync<void>('resumeProcessing', undefined);
   const acquireMaintenanceLease = jest.fn<Promise<boolean>, [MaintenanceLease]>(async () => true);
   const releaseMaintenanceLease = jest.fn<Promise<boolean>, [string, string]>(async () => true);
   const service = new LedgerMaintenanceService(
@@ -61,7 +58,7 @@ function buildService(intervalMs: MaintenanceIntervalMs = INTERVAL_MS) {
     { hydrate, restoreIfLost } as unknown as FlashSaleHydrationService,
     { sweepOrphans } as unknown as OrphanSweeper,
     { invalidateCache } as unknown as FlashSalesService,
-    { completePendingReset } as unknown as FlashSaleResetService,
+    { completePendingReset, resumeProcessing } as unknown as FlashSaleResetService,
     intervalMs,
     { acquireMaintenanceLease, releaseMaintenanceLease } as unknown as SaleLedgerLeaseRepository,
   );
@@ -74,6 +71,7 @@ function buildService(intervalMs: MaintenanceIntervalMs = INTERVAL_MS) {
     sweepOrphans,
     invalidateCache,
     completePendingReset,
+    resumeProcessing,
     acquireMaintenanceLease,
     releaseMaintenanceLease,
   };
@@ -102,11 +100,10 @@ describe('LedgerMaintenanceService', () => {
     await jest.advanceTimersByTimeAsync(0);
     const callsWhileLocked = [...built.calls];
     held.resolve();
-    await reset;
-    await boot;
+    await Promise.all([reset, boot]);
 
     expect(callsWhileLocked).toEqual([]);
-    expect(built.calls).toEqual(['hydrate', 'sweep:active:BOOT']);
+    expect(built.calls).toEqual(['hydrate', 'resumeProcessing', 'sweep:active:BOOT']);
     expect(built.acquireMaintenanceLease).toHaveBeenCalledTimes(1);
     expect(built.releaseMaintenanceLease).toHaveBeenCalledTimes(1);
     expect(jest.getTimerCount()).toBe(1);
@@ -154,6 +151,7 @@ describe('LedgerMaintenanceService', () => {
     });
     expect(restored).toEqual({ status: 'RAN', reset: 'NONE', hydration: 'HYDRATED', sweep: SWEEP });
     expect(built.invalidateCache).toHaveBeenCalledTimes(1);
+    expect(built.resumeProcessing).toHaveBeenCalledTimes(2);
   });
 
   it('finishes a pending reset before it restores lost keys and sweeps', async () => {
@@ -165,7 +163,12 @@ describe('LedgerMaintenanceService', () => {
 
     const result = await built.service.tick();
 
-    expect(built.calls).toEqual(['completePendingReset', 'restoreIfLost', 'sweep:active:INTERVAL']);
+    expect(built.calls).toEqual([
+      'completePendingReset',
+      'restoreIfLost',
+      'resumeProcessing',
+      'sweep:active:INTERVAL',
+    ]);
     expect(result).toMatchObject({ status: 'RAN', reset: 'COMPLETED' });
   });
 
@@ -199,8 +202,7 @@ describe('LedgerMaintenanceService', () => {
     await jest.advanceTimersByTimeAsync(INTERVAL_MS * 3);
     const destroyedWhileTickRuns = destroyed;
     held.resolve();
-    await tick;
-    await destroy;
+    await Promise.all([tick, destroy]);
 
     expect(destroyedWhileTickRuns).toBe(false);
     expect(destroyed).toBe(true);
@@ -216,6 +218,7 @@ describe('LedgerMaintenanceService', () => {
 
     expect(result).toEqual({ status: 'SKIPPED_BUSY' });
     expect(built.completePendingReset).not.toHaveBeenCalled();
+    expect(built.resumeProcessing).not.toHaveBeenCalled();
     expect(built.releaseMaintenanceLease).not.toHaveBeenCalled();
   });
 

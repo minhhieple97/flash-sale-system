@@ -1,6 +1,7 @@
 import type { NormalizedUserId } from '../../src/common/interfaces/user-id.interface';
 import type { PurchaseAttemptResult } from '../../src/modules/checkout/interfaces/checkout.interface';
 import { ACTIVE_FLASH_SALE_ID } from '../../src/modules/flash-sales/constants/flash-sales.constants';
+import { OrdersService } from '../../src/modules/orders/services/orders.service';
 import { deferred } from '../support/deferred';
 import { flashSaleStockKey, flashSaleUsersKey } from '../support/ledger-keys';
 import { createRealSaleHarness, type RealSaleHarness } from '../support/real-sale.harness';
@@ -159,6 +160,55 @@ describe('a persist job that commits after the ledger was restored without it', 
       }).toEqual({ pgOrderUsers: [buyer], redisUnits: TOTAL_STOCK, pgUnits: TOTAL_STOCK });
     } finally {
       allowRestoreFinish.resolve();
+      await releaseLock();
+    }
+  }, 30_000);
+
+  it('adopts a PG-committed order when concurrent over-reserves drove Redis stock to 0', async () => {
+    await h.resetService.reset({ totalStock: TOTAL_STOCK, startsOffsetSeconds: -60 });
+    const rawReleaseLock = await holdSaleRowLock();
+    let lockReleased = false;
+    const releaseLock = async (): Promise<void> => {
+      if (lockReleased) return;
+      lockReleased = true;
+      await rawReleaseLock();
+    };
+    const buyerA = userIdOf('adopt-a');
+    try {
+      const first = await h.checkout.attemptPurchase(buyerA);
+      if (first.outcome !== 'RESERVED') throw new Error(`unexpected outcome: ${first.outcome}`);
+      await waitForPersistBlockedOnLock();
+      await h.redis.flushall();
+      await h.maintenance.tick();
+      await h.queue.pause();
+
+      await h.checkout.attemptPurchase(userIdOf('adopt-b'));
+      await h.checkout.attemptPurchase(userIdOf('adopt-c'));
+      expect(await h.redis.get(flashSaleStockKey(ACTIVE_FLASH_SALE_ID))).toBe('0');
+
+      await releaseLock();
+      await waitFor(
+        async () => (await h.ledger.findSlot(ACTIVE_FLASH_SALE_ID, buyerA)).status,
+        (status) => status === 'CONFIRMED',
+      );
+      expect(await h.redis.get(flashSaleStockKey(ACTIVE_FLASH_SALE_ID))).toBe('-1');
+      h.flashSales.invalidateCache();
+      expect((await h.flashSales.getCurrentStatus()).remainingStock).toBe(0);
+
+      await h.queue.resume();
+      await waitForSettled();
+
+      const ordersService = h.moduleRef.get(OrdersService, { strict: false });
+      const lookup = await ordersService.getUserOrderStatus(buyerA);
+      const end = await readUnits();
+      const confirmed = end.redisEntries.filter((entry) => entry.startsWith('CONFIRMED:')).length;
+      expect(lookup).toEqual({ status: 'CONFIRMED', orderId: first.orderId, userId: buyerA });
+      expect(end.pgOrderUsers).toContain(buyerA);
+      expect(end.pgOrderUsers).toHaveLength(TOTAL_STOCK);
+      expect(end.redisStock + confirmed).toBe(TOTAL_STOCK);
+      expect(end.pgRemaining + end.pgOrderUsers.length).toBe(TOTAL_STOCK);
+    } finally {
+      await h.queue.resume().catch(() => undefined);
       await releaseLock();
     }
   }, 30_000);

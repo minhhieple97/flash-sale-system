@@ -1,7 +1,7 @@
 import type { LookupPresentation, OrderState } from '../types/orders.types';
 
-export const CONFIRMATION_POLL_INTERVAL_MS = 400;
-export const CONFIRMATION_POLL_MAX_ATTEMPTS = 75;
+export const CONFIRMATION_POLL_INTERVAL_MS = 1_000;
+export const CONFIRMATION_POLL_MAX_ATTEMPTS = 30;
 
 export function orderStatusPath(userId: string): string {
   return `/orders/user/${encodeURIComponent(userId)}`;

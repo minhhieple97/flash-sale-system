@@ -18,20 +18,31 @@ import {
   DEFAULT_RATE_LIMIT_WINDOW_MS,
   MAX_SALE_TOTAL_STOCK,
 } from '../common/constants/common.constants';
-import type { AppEnv, AppRole, NodeEnv } from './env.interface';
+import type { AppEnv, AppRole, LogLevel, NodeEnv } from './env.interface';
 
 const NODE_ENVS: readonly NodeEnv[] = ['development', 'production', 'test'];
 const APP_ROLES: readonly AppRole[] = ['all', 'api', 'worker'];
+const LOG_LEVELS: readonly LogLevel[] = [
+  'fatal',
+  'error',
+  'warn',
+  'info',
+  'debug',
+  'trace',
+  'silent',
+];
 const MIN_PORT = 1;
 const MAX_PORT = 65535;
+const MIN_DATABASE_POOL_MAX = 1;
+const MAX_DATABASE_POOL_MAX = 200;
 const MIN_SALE_STOCK = 1;
 const MIN_RATE_LIMIT_WINDOW_MS = 1_000;
 const MAX_RATE_LIMIT_WINDOW_MS = 3_600_000;
 const MIN_RATE_LIMIT_MAX = 1;
 const MAX_RATE_LIMIT_MAX = 100_000;
-const RFC_3339_TIMESTAMP =
+export const RFC_3339_TIMESTAMP =
   /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/;
-const RFC_3339_MESSAGE =
+export const RFC_3339_MESSAGE =
   '$property must be an RFC 3339 timestamp with Z or an explicit offset, e.g. 2030-01-01T09:00:00Z';
 const SALE_WINDOW_VARIABLES = ['SALE_STARTS_AT', 'SALE_ENDS_AT'] as const;
 
@@ -56,7 +67,7 @@ const toOptionalInteger = ({ value }: { value: unknown }): unknown =>
 class EnvironmentVariables implements AppEnv {
   @IsIn(NODE_ENVS) NODE_ENV: NodeEnv = 'development';
   @IsIn(APP_ROLES) APP_ROLE: AppRole = 'all';
-  @IsString() @IsNotEmpty() LOG_LEVEL = 'info';
+  @IsIn(LOG_LEVELS) LOG_LEVEL: LogLevel = 'info';
 
   @Transform(toInteger) @IsInt() @Min(MIN_PORT) @Max(MAX_PORT) PORT = DEFAULT_HTTP_PORT;
 
@@ -65,6 +76,13 @@ class EnvironmentVariables implements AppEnv {
   @IsString() @IsNotEmpty() POSTGRES_USER!: string;
   @IsString() @IsNotEmpty() POSTGRES_PASSWORD!: string;
   @IsString() @IsNotEmpty() POSTGRES_DB!: string;
+
+  @Transform(toOptionalInteger)
+  @IsOptional()
+  @IsInt()
+  @Min(MIN_DATABASE_POOL_MAX)
+  @Max(MAX_DATABASE_POOL_MAX)
+  DATABASE_POOL_MAX?: number;
 
   @IsString() @IsNotEmpty() REDIS_HOST!: string;
   @Transform(toInteger) @IsInt() @Min(MIN_PORT) @Max(MAX_PORT) REDIS_PORT!: number;

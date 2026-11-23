@@ -19,7 +19,6 @@ describe('validateEnv', () => {
       PORT: '4000',
       ENABLE_ADMIN_ENDPOINTS: 'true',
     });
-
     expect(env).toMatchObject({
       NODE_ENV: 'production',
       LOG_LEVEL: 'warn',
@@ -33,7 +32,6 @@ describe('validateEnv', () => {
 
   it('applies defaults when optional variables are absent', () => {
     const env = validateEnv({ ...REQUIRED });
-
     expect(env).toMatchObject({
       NODE_ENV: 'development',
       APP_ROLE: 'all',
@@ -48,20 +46,17 @@ describe('validateEnv', () => {
   });
 
   it('keeps the unauthenticated admin endpoints off when ENABLE_ADMIN_ENDPOINTS is unset', () => {
-    const env = validateEnv({ ...REQUIRED });
-
-    expect(env.ENABLE_ADMIN_ENDPOINTS).toBe(false);
+    expect(validateEnv({ ...REQUIRED }).ENABLE_ADMIN_ENDPOINTS).toBe(false);
   });
 
   it('parses the string "false" to boolean false', () => {
-    const env = validateEnv({ ...REQUIRED, ENABLE_ADMIN_ENDPOINTS: 'false' });
-
-    expect(env.ENABLE_ADMIN_ENDPOINTS).toBe(false);
+    expect(
+      validateEnv({ ...REQUIRED, ENABLE_ADMIN_ENDPOINTS: 'false' }).ENABLE_ADMIN_ENDPOINTS,
+    ).toBe(false);
   });
 
   it('throws naming a missing required variable', () => {
     const { POSTGRES_HOST: _omitted, ...rest } = REQUIRED;
-
     expect(() => validateEnv(rest)).toThrow(/POSTGRES_HOST/);
   });
 
@@ -69,6 +64,8 @@ describe('validateEnv', () => {
     ['REDIS_PORT', 'abc'],
     ['REDIS_PORT', '70000'],
     ['NODE_ENV', 'staging'],
+    ['LOG_LEVEL', 'verbose'],
+    ['LOG_LEVEL', ''],
     ['ENABLE_ADMIN_ENDPOINTS', 'yes'],
     ['APP_ROLE', 'scheduler'],
     ['APP_ROLE', ''],
@@ -79,14 +76,30 @@ describe('validateEnv', () => {
     ['RATE_LIMIT_WINDOW_MS', 'abc'],
     ['RATE_LIMIT_MAX', '0'],
     ['RATE_LIMIT_MAX', '100001'],
+    ['DATABASE_POOL_MAX', '0'],
+    ['DATABASE_POOL_MAX', '201'],
+    ['DATABASE_POOL_MAX', '-1'],
+    ['DATABASE_POOL_MAX', '2.5'],
+    ['DATABASE_POOL_MAX', 'abc'],
   ])('throws naming %s when it is %s', (name, value) => {
     expect(() => validateEnv({ ...REQUIRED, [name]: value })).toThrow(new RegExp(name));
+  });
+
+  it.each(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const)(
+    'accepts valid LOG_LEVEL %s',
+    (level) => expect(validateEnv({ ...REQUIRED, LOG_LEVEL: level }).LOG_LEVEL).toBe(level),
+  );
+
+  it('parses optional DATABASE_POOL_MAX and treats empty string as undefined', () => {
+    expect(validateEnv({ ...REQUIRED }).DATABASE_POOL_MAX).toBeUndefined();
+    expect(validateEnv({ ...REQUIRED, DATABASE_POOL_MAX: '' }).DATABASE_POOL_MAX).toBeUndefined();
+    expect(validateEnv({ ...REQUIRED, DATABASE_POOL_MAX: '1' }).DATABASE_POOL_MAX).toBe(1);
+    expect(validateEnv({ ...REQUIRED, DATABASE_POOL_MAX: '200' }).DATABASE_POOL_MAX).toBe(200);
   });
 
   describe('sale window variables', () => {
     it('keeps the sale variables undefined when they are absent or empty', () => {
       const env = validateEnv({ ...REQUIRED, SALE_STARTS_AT: '', SALE_ENDS_AT: '' });
-
       expect([env.SALE_STARTS_AT, env.SALE_ENDS_AT, env.SALE_TOTAL_STOCK]).toEqual([
         undefined,
         undefined,
@@ -101,7 +114,6 @@ describe('validateEnv', () => {
         SALE_ENDS_AT: '2030-01-01T01:00:00Z',
         SALE_TOTAL_STOCK: '25',
       });
-
       expect(env).toMatchObject({
         SALE_STARTS_AT: '2030-01-01T00:00:00Z',
         SALE_ENDS_AT: '2030-01-01T01:00:00Z',
@@ -115,7 +127,6 @@ describe('validateEnv', () => {
         SALE_STARTS_AT: '2030-01-01T01:00:00Z',
         SALE_ENDS_AT: '2030-01-01T01:00:00Z',
       };
-
       expect(() => validateEnv(raw)).toThrow(/SALE_ENDS_AT/);
     });
 
@@ -135,7 +146,6 @@ describe('validateEnv', () => {
       ['SALE_ENDS_AT', '2030-13-45T00:00:00Z'],
     ])('rejects %s when it is not an RFC 3339 timestamp with a zone (%s)', (name, value) => {
       const raw = { ...REQUIRED, SALE_STARTS_AT: VALID_START, SALE_ENDS_AT: VALID_END };
-
       expect(() => validateEnv({ ...raw, [name]: value })).toThrow(
         new RegExp(`${name} must be an RFC 3339 timestamp`),
       );
@@ -145,7 +155,6 @@ describe('validateEnv', () => {
       'accepts the zoned timestamp %s',
       (value) => {
         const raw = { ...REQUIRED, SALE_STARTS_AT: value, SALE_ENDS_AT: '2031-01-01T00:00:00Z' };
-
         expect(validateEnv(raw).SALE_STARTS_AT).toBe(value);
       },
     );
@@ -161,29 +170,26 @@ describe('validateEnv', () => {
 
     it('treats an empty variable as unset when checking the pair', () => {
       const raw = { ...REQUIRED, SALE_STARTS_AT: VALID_START, SALE_ENDS_AT: '' };
-
       expect(() => validateEnv(raw)).toThrow(
         /SALE_ENDS_AT must be set together with SALE_STARTS_AT/,
       );
     });
 
     it('accepts a window that is already over, since a past sale is a legitimate sale', () => {
-      const raw = {
+      const env = validateEnv({
         ...REQUIRED,
         SALE_STARTS_AT: '2020-01-01T00:00:00Z',
         SALE_ENDS_AT: '2020-01-01T01:00:00Z',
-      };
-
-      expect(validateEnv(raw).SALE_ENDS_AT).toBe('2020-01-01T01:00:00Z');
+      });
+      expect(env.SALE_ENDS_AT).toBe('2020-01-01T01:00:00Z');
     });
 
     it.each(['0', '-3', '2.5', 'many', '1000001', '3000000000', '99999999999999999999'])(
       'rejects SALE_TOTAL_STOCK %s',
-      (value) => {
+      (value) =>
         expect(() => validateEnv({ ...REQUIRED, SALE_TOTAL_STOCK: value })).toThrow(
           /SALE_TOTAL_STOCK/,
-        );
-      },
+        ),
     );
 
     it('accepts SALE_TOTAL_STOCK up to the reset cap of 1000000', () => {
@@ -195,18 +201,17 @@ describe('validateEnv', () => {
 
   describe('role, admin key and rate limit variables', () => {
     it('parses valid values and treats an empty ADMIN_API_KEY as unset', () => {
-      const configured = validateEnv({
-        ...REQUIRED,
-        APP_ROLE: 'api',
-        ADMIN_API_KEY: 'super-secret',
-        TRUST_PROXY: 'true',
-        RATE_LIMIT_ENABLED: 'true',
-        RATE_LIMIT_WINDOW_MS: '1000',
-        RATE_LIMIT_MAX: '100000',
-      });
-      const blankKey = validateEnv({ ...REQUIRED, APP_ROLE: 'worker', ADMIN_API_KEY: '' });
-
-      expect(configured).toMatchObject({
+      expect(
+        validateEnv({
+          ...REQUIRED,
+          APP_ROLE: 'api',
+          ADMIN_API_KEY: 'super-secret',
+          TRUST_PROXY: 'true',
+          RATE_LIMIT_ENABLED: 'true',
+          RATE_LIMIT_WINDOW_MS: '1000',
+          RATE_LIMIT_MAX: '100000',
+        }),
+      ).toMatchObject({
         APP_ROLE: 'api',
         ADMIN_API_KEY: 'super-secret',
         TRUST_PROXY: true,
@@ -214,34 +219,29 @@ describe('validateEnv', () => {
         RATE_LIMIT_WINDOW_MS: 1000,
         RATE_LIMIT_MAX: 100_000,
       });
-      expect(blankKey.APP_ROLE).toBe('worker');
-      expect(blankKey.ADMIN_API_KEY).toBeUndefined();
+      const blankKey = validateEnv({ ...REQUIRED, APP_ROLE: 'worker', ADMIN_API_KEY: '' });
+      expect([blankKey.APP_ROLE, blankKey.ADMIN_API_KEY]).toEqual(['worker', undefined]);
     });
 
-    it.each([
-      [undefined, 'all'],
-      ['', 'all'],
-      ['all', 'all'],
-      ['api', 'api'],
-      ['worker', 'worker'],
-    ] as const)('parseAppRole(%s) returns %s', (raw, expected) => {
-      expect(parseAppRole(raw)).toBe(expected);
-    });
-
-    it('parseAppRole rejects invalid roles', () => {
+    it('parses APP_ROLE and TRUST_PROXY helpers and rejects invalid values', () => {
+      for (const [raw, expected] of [
+        [undefined, 'all'],
+        ['', 'all'],
+        ['all', 'all'],
+        ['api', 'api'],
+        ['worker', 'worker'],
+      ] as const) {
+        expect(parseAppRole(raw)).toBe(expected);
+      }
       expect(() => parseAppRole('scheduler')).toThrow(/APP_ROLE/);
-    });
-
-    it.each([
-      [undefined, false],
-      ['', false],
-      ['false', false],
-      ['true', true],
-    ] as const)('parseTrustProxy(%s) returns %s', (raw, expected) => {
-      expect(parseTrustProxy(raw)).toBe(expected);
-    });
-
-    it('parseTrustProxy rejects invalid values', () => {
+      for (const [raw, expected] of [
+        [undefined, false],
+        ['', false],
+        ['false', false],
+        ['true', true],
+      ] as const) {
+        expect(parseTrustProxy(raw)).toBe(expected);
+      }
       expect(() => parseTrustProxy('yes')).toThrow(/TRUST_PROXY/);
     });
   });

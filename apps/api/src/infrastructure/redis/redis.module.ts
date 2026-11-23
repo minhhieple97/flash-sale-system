@@ -1,14 +1,19 @@
 import { once } from 'node:events';
-import { Inject, Module, type OnApplicationShutdown } from '@nestjs/common';
+import { Inject, Logger, Module, type OnApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 import type { AppEnv } from '../../config/env.interface';
 import { REDIS_CLIENT, REDIS_CLOSED_STATUS, REDIS_READY_EVENT } from './redis.constants';
 import { hotPathRedisOptions } from './redis-connection.options';
 
+const redisLogger = new Logger('RedisModule');
+
 /** With the offline queue off, a command sent before `ready` rejects, so the provider waits for it. */
 async function connectHotPathClient(config: ConfigService<AppEnv, true>): Promise<Redis> {
   const client = new Redis(hotPathRedisOptions(config));
+  client.on('error', (error: Error) => {
+    redisLogger.error(`Hot-path Redis client error: ${error.message || String(error)}`);
+  });
   try {
     await once(client, REDIS_READY_EVENT);
   } catch (error) {

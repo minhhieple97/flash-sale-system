@@ -35,7 +35,7 @@ describe('DemoScenarioDrawer', () => {
     expect(screen.queryByRole('button', { name: 'Active Sale' })).not.toBeInTheDocument();
   });
 
-  it('shows the four presets with their descriptions when expanded', async () => {
+  it('shows the four presets with their descriptions when expanded and hides Admin key by default', async () => {
     render(<DemoScenarioDrawer onScenarioApplied={vi.fn()} />);
 
     await openDrawer();
@@ -47,6 +47,7 @@ describe('DemoScenarioDrawer', () => {
     expect(screen.getByRole('button', { name: 'High Scarcity' })).toHaveAccessibleDescription(
       '3 stock left',
     );
+    expect(screen.queryByLabelText('Admin key')).not.toBeInTheDocument();
   });
 
   it('collapses again when the toggle is clicked a second time', async () => {
@@ -137,10 +138,15 @@ describe('DemoScenarioDrawer', () => {
     expect(screen.getByRole('button', { name: 'Ended Sale' })).toBeEnabled();
   });
 
-  it('shows a warning alert on UNAUTHORIZED while keeping the API message', async () => {
-    stubFetch(async () =>
-      jsonResponse(401, { code: 'UNAUTHORIZED', message: 'Valid admin key is required' }),
-    );
+  it('shows a warning alert and Admin key password field on 401, then resends with x-admin-key', async () => {
+    let calls = 0;
+    const sale = buildSale({ saleState: 'ENDED' });
+    const fetchStub = stubFetch(async (_url, init) => {
+      calls += 1;
+      const key = new Headers(init?.headers).get('x-admin-key');
+      if (key === 'secret-admin') return jsonResponse(200, sale);
+      return jsonResponse(401, { code: 'UNAUTHORIZED', message: 'Valid admin key is required' });
+    });
     const onScenarioApplied = vi.fn();
     render(<DemoScenarioDrawer onScenarioApplied={onScenarioApplied} />);
     const user = await openDrawer();
@@ -152,5 +158,18 @@ describe('DemoScenarioDrawer', () => {
     expect(alert).toHaveTextContent('Valid admin key is required');
     expect(onScenarioApplied).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Ended Sale' })).toBeEnabled();
+
+    const keyInput = screen.getByLabelText('Admin key');
+    expect(keyInput).toHaveAttribute('type', 'password');
+    await user.type(keyInput, 'secret-admin');
+    await user.click(screen.getByRole('button', { name: 'Ended Sale' }));
+
+    expect(calls).toBe(2);
+    expect(new Headers(fetchStub.mock.calls[1]?.[1]?.headers).get('x-admin-key')).toBe(
+      'secret-admin',
+    );
+    expect(onScenarioApplied).toHaveBeenCalledExactlyOnceWith(sale);
+    expect(await screen.findByRole('status')).toHaveTextContent('Ended Sale');
+    expect(screen.getByLabelText('Admin key')).toBeInTheDocument();
   });
 });

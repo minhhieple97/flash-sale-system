@@ -28,6 +28,14 @@ function userIdInput(): HTMLInputElement {
   return screen.getByLabelText('User ID') as HTMLInputElement;
 }
 
+async function buyActive(userId = 'alice'): Promise<ReturnType<typeof userEvent.setup>> {
+  const user = userEvent.setup();
+  render(<CheckoutFormCard sale={saleWithState('ACTIVE')} />);
+  await user.type(userIdInput(), userId);
+  await user.click(buyNow());
+  return user;
+}
+
 describe('CheckoutFormCard availability', () => {
   it.each<[SaleState | null, string]>([
     ['UPCOMING', 'The sale has not started yet.'],
@@ -50,9 +58,7 @@ describe('CheckoutFormCard availability', () => {
   it('enables Buy Now for an active sale with a user id and shows no reason', async () => {
     const user = userEvent.setup();
     render(<CheckoutFormCard sale={saleWithState('ACTIVE')} />);
-
     await user.type(userIdInput(), 'alice');
-
     expect(buyNow()).toBeEnabled();
     expect(screen.queryByText(/sale has not started yet\.|sold out\.|has ended\./)).toBeNull();
   });
@@ -63,11 +69,7 @@ describe('CheckoutFormCard availability', () => {
     render(<CheckoutFormCard sale={saleWithState('UPCOMING')} />);
     fireEvent.change(userIdInput(), { target: { value: 'alice' } });
     expect(buyNow()).toBeDisabled();
-
-    act(() => {
-      vi.advanceTimersByTime(10_000);
-    });
-
+    act(() => vi.advanceTimersByTime(10_000));
     expect(buyNow()).toBeEnabled();
     expect(screen.queryByText('The sale has not started yet.')).toBeNull();
   });
@@ -75,15 +77,12 @@ describe('CheckoutFormCard availability', () => {
   it('disables Buy Now for a blank user id', async () => {
     const user = userEvent.setup();
     render(<CheckoutFormCard sale={saleWithState('ACTIVE')} />);
-
     await user.type(userIdInput(), '   ');
-
     expect(buyNow()).toBeDisabled();
   });
 
   it('exposes the card as a Checkout region', () => {
     render(<CheckoutFormCard sale={saleWithState('ACTIVE')} />);
-
     expect(screen.getByRole('region', { name: 'Checkout' })).toBeInTheDocument();
   });
 });
@@ -105,7 +104,6 @@ describe('CheckoutFormCard random user', () => {
 
 describe('CheckoutFormCard submitting', () => {
   it('keeps the previous result in place during a repeated purchase and replaces it with the new result', async () => {
-    const user = userEvent.setup();
     let resolveRetry: (response: Response) => void = () => undefined;
     let calls = 0;
     stubFetch(() => {
@@ -119,13 +117,10 @@ describe('CheckoutFormCard submitting', () => {
         resolveRetry = resolve;
       });
     });
-    render(<CheckoutFormCard sale={saleWithState('ACTIVE')} />);
-    await user.type(userIdInput(), 'alice');
-    await user.click(buyNow());
+    const user = await buyActive();
     const priorAlert = await screen.findByRole('alert');
 
     await user.click(buyNow());
-
     expect(buyNow()).toBeDisabled();
     expect(buyNow()).toHaveTextContent('Processing...');
     expect(screen.getByRole('alert')).toBe(priorAlert);
@@ -138,13 +133,8 @@ describe('CheckoutFormCard submitting', () => {
   });
 
   it('locks Buy Now while the request is pending and keeps its name', async () => {
-    const user = userEvent.setup();
     stubFetch(() => new Promise<Response>(() => undefined));
-    render(<CheckoutFormCard sale={saleWithState('ACTIVE')} />);
-    await user.type(userIdInput(), 'alice');
-
-    await user.click(buyNow());
-
+    await buyActive();
     expect(buyNow()).toBeDisabled();
     expect(buyNow()).toHaveAttribute('aria-busy', 'true');
     expect(buyNow()).toHaveTextContent('Processing...');
@@ -153,17 +143,12 @@ describe('CheckoutFormCard submitting', () => {
   });
 
   it('shows the reservation feedback with the order id on 202', async () => {
-    const user = userEvent.setup();
     stubFetch(async (url) =>
       url === PURCHASE_URL
         ? reservedResponse('alice')
         : orderStatusResponse('RESERVED', 'alice', ORDER_ID),
     );
-    render(<CheckoutFormCard sale={saleWithState('ACTIVE')} />);
-    await user.type(userIdInput(), 'alice');
-
-    await user.click(buyNow());
-
+    await buyActive();
     expect(await screen.findByText('Reserved! Confirming your order...')).toBeInTheDocument();
     expect(screen.getByText(new RegExp(ORDER_ID))).toBeInTheDocument();
   });
@@ -171,28 +156,18 @@ describe('CheckoutFormCard submitting', () => {
   it.each(OUTCOME_CASES)(
     'shows "$title" and the server message on $status $code',
     async (outcome) => {
-      const user = userEvent.setup();
       stubFetch(async () =>
         jsonResponse(outcome.status, { code: outcome.code, message: outcome.message }),
       );
-      render(<CheckoutFormCard sale={saleWithState('ACTIVE')} />);
-      await user.type(userIdInput(), 'alice');
-
-      await user.click(buyNow());
-
+      await buyActive();
       expect(await screen.findByText(outcome.title)).toBeInTheDocument();
       expect(screen.getByText(outcome.message)).toBeInTheDocument();
     },
   );
 
   it('falls back to a generic failure title for an unknown code', async () => {
-    const user = userEvent.setup();
     stubFetch(async () => jsonResponse(503, { code: 'SOMETHING_NEW', message: 'Try again soon' }));
-    render(<CheckoutFormCard sale={saleWithState('ACTIVE')} />);
-    await user.type(userIdInput(), 'alice');
-
-    await user.click(buyNow());
-
+    await buyActive();
     expect(await screen.findByText('Purchase failed')).toBeInTheDocument();
     expect(screen.getByText('Try again soon')).toBeInTheDocument();
   });
@@ -200,6 +175,11 @@ describe('CheckoutFormCard submitting', () => {
 
 describe('CheckoutFormCard onPurchaseReserved', () => {
   const step = (ms: number): Promise<unknown> => act(async () => vi.advanceTimersByTimeAsync(ms));
+  const submitAlice = async (): Promise<void> => {
+    fireEvent.change(userIdInput(), { target: { value: 'alice' } });
+    fireEvent.click(buyNow());
+    await step(0);
+  };
 
   it('fires once on 202 and again on confirmed without spamming on rerender', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: false });
@@ -214,13 +194,10 @@ describe('CheckoutFormCard onPurchaseReserved', () => {
           onPurchaseReserved={() => onReserved()}
         />,
       );
-    fireEvent.change(userIdInput(), { target: { value: 'alice' } });
-    fireEvent.click(buyNow());
-    await step(0);
+    await submitAlice();
     expect(onReserved).toHaveBeenCalledTimes(1);
-
     redraw(36);
-    await step(400);
+    await step(1_000);
     expect(onReserved).toHaveBeenCalledTimes(2);
     redraw(35);
     expect(onReserved).toHaveBeenCalledTimes(2);
@@ -230,21 +207,42 @@ describe('CheckoutFormCard onPurchaseReserved', () => {
     vi.useFakeTimers({ shouldAdvanceTime: false });
     const onReserved = vi.fn();
     stubFetch(async () => jsonResponse(409, { code: 'ALREADY_PURCHASED', message: 'Already' }));
-    const view = render(
-      <CheckoutFormCard sale={saleWithState('ACTIVE')} onPurchaseReserved={onReserved} />,
-    );
-    fireEvent.change(userIdInput(), { target: { value: 'alice' } });
-    fireEvent.click(buyNow());
-    await step(0);
+    const active = saleWithState('ACTIVE');
+    const view = render(<CheckoutFormCard sale={active} onPurchaseReserved={onReserved} />);
+    await submitAlice();
     expect(onReserved).not.toHaveBeenCalled();
-
     stubCheckoutFlow('NONE');
-    view.rerender(
-      <CheckoutFormCard sale={saleWithState('ACTIVE')} onPurchaseReserved={onReserved} />,
-    );
+    view.rerender(<CheckoutFormCard sale={active} onPurchaseReserved={onReserved} />);
     fireEvent.click(buyNow());
     await step(0);
-    await step(400);
+    await step(1_000);
     expect(onReserved).toHaveBeenCalledTimes(2);
+  });
+
+  it('starts a fresh confirmation poll when retrying the same user after released', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    let purchases = 0;
+    let order2Polls = 0;
+    stubFetch(async (url) => {
+      if (url === PURCHASE_URL) {
+        purchases += 1;
+        return reservedResponse('alice', `order-${purchases}`);
+      }
+      if (purchases === 1) return orderStatusResponse('NONE', 'alice');
+      order2Polls += 1;
+      return orderStatusResponse(order2Polls === 1 ? 'RESERVED' : 'CONFIRMED', 'alice', 'order-2');
+    });
+    render(<CheckoutFormCard sale={saleWithState('ACTIVE')} />);
+    await submitAlice();
+    expect(screen.getByRole('alert')).toHaveTextContent('Reservation released');
+
+    fireEvent.click(buyNow());
+    await step(0);
+    expect(screen.getByText('Reserved! Confirming your order...')).toBeInTheDocument();
+    expect(screen.getByText(/order-2/)).toBeInTheDocument();
+
+    await step(1_000);
+    expect(screen.getByRole('status')).toHaveTextContent('Order confirmed');
+    expect(screen.getByText('order-2')).toBeInTheDocument();
   });
 });

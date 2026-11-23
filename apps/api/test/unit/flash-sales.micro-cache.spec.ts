@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import type { ClockService } from '../../src/common/providers/clock.service';
 import { FlashSalesService } from '../../src/modules/flash-sales/services/flash-sales.service';
 import type {
@@ -21,6 +22,10 @@ describe('FlashSalesService micro-cache', () => {
     const clock = { nowMs: (): number => now } as unknown as ClockService;
     const cache = { readSnapshot } as unknown as SaleLedgerRepository;
     service = new FlashSalesService(cache, clock);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   it('serves a second call 199 ms later from the cache', async () => {
@@ -88,4 +93,17 @@ describe('FlashSalesService micro-cache', () => {
 
     expect(readSnapshot).toHaveBeenCalledTimes(2);
   });
+
+  it.each<SnapshotRead>([{ status: 'STOCK_MISSING' }, { status: 'NOT_CONFIGURED' }])(
+    'does not cache negative %s snapshot reads',
+    async (negativeRead) => {
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      readSnapshot.mockResolvedValueOnce(negativeRead);
+
+      await expect(service.getCurrentStatus()).rejects.toThrow();
+      await expect(service.getCurrentStatus()).resolves.toMatchObject({ saleState: 'ACTIVE' });
+
+      expect(readSnapshot).toHaveBeenCalledTimes(2);
+    },
+  );
 });

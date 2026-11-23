@@ -2,7 +2,6 @@ import { ACTIVE_FLASH_SALE_ID } from '../../src/modules/flash-sales/constants/fl
 import type { OrdersRepository } from '../../src/modules/orders/repositories/orders.repository';
 import { OrdersService } from '../../src/modules/orders/services/orders.service';
 import type {
-  ConfirmedReservation,
   ReservationSlot,
   SaleLedgerRepository,
   SlotReadWithLedgerState,
@@ -79,22 +78,7 @@ describe('OrdersService.getUserOrderStatus', () => {
   });
 });
 
-describe('OrdersService.listConfirmedReservations', () => {
-  it('lists confirmed reservations straight from the orders table', async () => {
-    const listConfirmed = jest.fn<Promise<readonly ConfirmedReservation[]>, [string]>();
-    const service = new OrdersService(
-      { listConfirmed } as unknown as OrdersRepository,
-      {} as SaleLedgerRepository,
-    );
-    const confirmed = [{ userId: userIdOf('alice'), orderId: 'order-1' }];
-    listConfirmed.mockResolvedValue(confirmed);
-
-    const result = await service.listConfirmedReservations('sale-9');
-
-    expect(result).toBe(confirmed);
-    expect(listConfirmed).toHaveBeenCalledWith('sale-9');
-  });
-
+describe('OrdersService hydration queries', () => {
   it('checks hasConfirmedOrders and pages listConfirmedBatch via the repository', async () => {
     const hasConfirmedOrders = jest.fn(async () => true);
     const page = { entries: [], nextCursor: null };

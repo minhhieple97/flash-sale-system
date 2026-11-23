@@ -1,14 +1,16 @@
 import type { AsyncState } from '@/shared/types/async-state.types';
 import type { Tone } from '@/shared/types/tone.types';
 
-export type PurchaseOutcomeCode =
-  | 'RESERVED'
+export type PurchaseRejectionCode =
   | 'ALREADY_PURCHASED'
   | 'SOLD_OUT'
   | 'SALE_UPCOMING'
   | 'SALE_ENDED'
   | 'INVALID_USER_ID'
-  | 'TEMPORARY_FAILURE';
+  | 'TEMPORARY_FAILURE'
+  | 'RATE_LIMITED';
+
+export type PurchaseOutcomeCode = 'RESERVED' | PurchaseRejectionCode;
 
 export type ConfirmationFeedbackCode = 'CONFIRMED' | 'RESERVATION_RELEASED' | 'STILL_CONFIRMING';
 

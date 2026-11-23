@@ -1,8 +1,16 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CheckoutFormCard } from '@/modules/checkout';
 import { SaleStatusBanner } from '../components/SaleStatusBanner';
-import type { SaleState } from '../types/flash-sale.types';
+import type { FlashSaleStatus, SaleState } from '../types/flash-sale.types';
 import { buildSale, HOUR_MS, isoAt, SERVER_NOW } from './flash-sale-fixtures';
+
+const STATE_OVERRIDES: Record<SaleState, Partial<FlashSaleStatus>> = {
+  UPCOMING: { saleState: 'UPCOMING', startsAt: isoAt(HOUR_MS), endsAt: isoAt(2 * HOUR_MS) },
+  ACTIVE: { saleState: 'ACTIVE' },
+  SOLD_OUT: { saleState: 'SOLD_OUT', remainingStock: 0 },
+  ENDED: { saleState: 'ENDED', startsAt: isoAt(-2 * HOUR_MS), endsAt: isoAt(-HOUR_MS) },
+};
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -20,7 +28,7 @@ describe('SaleStatusBanner', () => {
     ['SOLD_OUT', 'Sold out'],
     ['ENDED', 'Ended'],
   ])('shows the %s state as the "%s" pill', (saleState, label) => {
-    const sale = buildSale({ saleState });
+    const sale = buildSale(STATE_OVERRIDES[saleState]);
 
     render(<SaleStatusBanner feed={{ sale, error: null }} />);
 
@@ -70,13 +78,78 @@ describe('SaleStatusBanner', () => {
   it.each<SaleState>(['SOLD_OUT', 'ENDED'])(
     'shows no countdown when the sale is %s',
     (saleState) => {
-      const sale = buildSale({ saleState });
+      const sale = buildSale(STATE_OVERRIDES[saleState]);
 
       render(<SaleStatusBanner feed={{ sale, error: null }} />);
 
       expect(screen.queryByRole('timer')).not.toBeInTheDocument();
     },
   );
+
+  it('flips from Upcoming to Live now and then Ended at exact boundaries without polling', () => {
+    const sale = buildSale({
+      saleState: 'UPCOMING',
+      startsAt: isoAt(10_000),
+      endsAt: isoAt(20_000),
+    });
+    render(<SaleStatusBanner feed={{ sale, error: null }} />);
+    expect(screen.getByText('Upcoming')).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(screen.getByText('Live now')).toBeInTheDocument();
+    expect(screen.getByRole('timer')).toHaveTextContent('Ends in 00:00:10');
+
+    act(() => {
+      vi.advanceTimersByTime(10_001);
+    });
+    expect(screen.getByText('Ended')).toBeInTheDocument();
+    expect(screen.queryByRole('timer')).not.toBeInTheDocument();
+  });
+
+  it('flips SaleStatusBanner and CheckoutFormCard simultaneously at startsAt and endsAt', () => {
+    const sale = buildSale({
+      saleState: 'UPCOMING',
+      startsAt: isoAt(10_000),
+      endsAt: isoAt(20_000),
+    });
+    render(
+      <>
+        <SaleStatusBanner feed={{ sale, error: null }} />
+        <CheckoutFormCard sale={sale} />
+      </>,
+    );
+    expect(screen.getByText('Upcoming')).toBeInTheDocument();
+    expect(screen.getByText('The sale has not started yet.')).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(screen.getByText('Live now')).toBeInTheDocument();
+    expect(screen.queryByText('The sale has not started yet.')).not.toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(10_001);
+    });
+    expect(screen.getByText('Ended')).toBeInTheDocument();
+    expect(screen.getByText('This sale has ended.')).toBeInTheDocument();
+  });
+
+  it('transitions SOLD_OUT -> Ended past endsAt', () => {
+    const sale = buildSale({
+      saleState: 'SOLD_OUT',
+      remainingStock: 0,
+      endsAt: isoAt(5_000),
+    });
+    render(<SaleStatusBanner feed={{ sale, error: null }} />);
+    expect(screen.getByText('Sold out')).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(5_001);
+    });
+    expect(screen.getByText('Ended')).toBeInTheDocument();
+  });
 
   it('shows a loading placeholder before the first response', () => {
     render(<SaleStatusBanner feed={{ sale: null, error: null }} />);
@@ -85,7 +158,7 @@ describe('SaleStatusBanner', () => {
   });
 
   it('shows an error alert with the API message when there is no sale', () => {
-    const error = { code: 'NO_SALE', message: 'No sale is configured.' };
+    const error = { code: 'FLASH_SALE_NOT_FOUND', message: 'No sale is configured.' };
 
     render(<SaleStatusBanner feed={{ sale: null, error }} />);
 
@@ -111,7 +184,7 @@ describe('SaleStatusBanner', () => {
   it.each([
     ['live', { sale: buildSale(), error: null }],
     ['loading', { sale: null, error: null }],
-    ['failed', { sale: null, error: { code: 'NO_SALE', message: 'No sale.' } }],
+    ['failed', { sale: null, error: { code: 'FLASH_SALE_NOT_FOUND', message: 'No sale.' } }],
   ])('is a region named "Sale status" while %s', (_label, feed) => {
     render(<SaleStatusBanner feed={feed} />);
 

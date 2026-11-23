@@ -19,11 +19,11 @@ export function configureApp(app: NestFastifyApplication): void {
   app
     .getHttpAdapter()
     .getInstance()
-    .addHook('onSend', async (_request, reply, payload) => {
+    .addHook('onSend', (_request, reply, ...[payload, done]) => {
       for (const [name, value] of SECURITY_HEADERS) {
         reply.header(name, value);
       }
-      return payload;
+      done(null, payload);
     });
   app.enableShutdownHooks();
 }

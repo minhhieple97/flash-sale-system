@@ -1,4 +1,4 @@
-import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Header, Param, UseGuards } from '@nestjs/common';
 import { RateLimitGuard } from '../../../common/guards/rate-limit.guard';
 import type { NormalizedUserId } from '../../../common/interfaces/user-id.interface';
 import { NormalizedUserIdPipe } from '../../../common/pipes/normalized-user-id.pipe';
@@ -13,6 +13,7 @@ export class OrdersController {
 
   /** `OrderStatusResponseDto.from(await ordersService.getUserOrderStatus(userId))`. */
   @Get(USER_ORDER_ROUTE)
+  @Header('Cache-Control', 'no-store')
   async getUserOrder(
     @Param(USER_ID_PARAM, NormalizedUserIdPipe) userId: NormalizedUserId,
   ): Promise<OrderStatusResponseDto> {

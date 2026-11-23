@@ -1,9 +1,11 @@
-import type { Provider } from '@nestjs/common';
+import { Logger, type Provider } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import type { AppEnv } from '../../config/env.interface';
 import { queueProducerRedisOptions } from '../redis/redis-connection.options';
 import { ORDER_PERSISTENCE_PRODUCER, ORDER_PERSISTENCE_QUEUE } from './queue.constants';
+
+const producerLogger = new Logger('OrderPersistenceProducer');
 
 /**
  * `@nestjs/bullmq` builds the worker from the registered queue's connection, so the producer needs
@@ -12,8 +14,15 @@ import { ORDER_PERSISTENCE_PRODUCER, ORDER_PERSISTENCE_QUEUE } from './queue.con
 export const orderPersistenceProducerProvider: Provider = {
   provide: ORDER_PERSISTENCE_PRODUCER,
   inject: [ConfigService],
-  useFactory: (config: ConfigService<AppEnv, true>): Queue =>
-    new Queue(ORDER_PERSISTENCE_QUEUE, { connection: queueProducerRedisOptions(config) }),
+  useFactory: (config: ConfigService<AppEnv, true>): Queue => {
+    const queue = new Queue(ORDER_PERSISTENCE_QUEUE, {
+      connection: queueProducerRedisOptions(config),
+    });
+    queue.on('error', (error: Error) => {
+      producerLogger.error(`Order persistence queue error: ${error.message || String(error)}`);
+    });
+    return queue;
+  },
 };
 
 /**

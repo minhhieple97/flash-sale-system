@@ -80,6 +80,46 @@ describe('requestJson', () => {
     expect(result).toMatchObject({ ok: false, status: 500, error: { code: 'HTTP_500' } });
   });
 
+  it('returns INVALID_RESPONSE when a 2xx response has a non-JSON or empty body', async () => {
+    stubFetch(async () => textResponse(200, '<html>index</html>'));
+
+    const htmlResult = await requestJson({ path: '/ping' });
+
+    expect(htmlResult).toEqual({
+      ok: false,
+      status: 200,
+      error: { code: 'INVALID_RESPONSE', message: FALLBACK_ERROR_MESSAGE },
+    });
+
+    stubFetch(async () => new Response('', { status: 200 }));
+    const emptyResult = await requestJson({ path: '/ping' });
+
+    expect(emptyResult).toEqual({
+      ok: false,
+      status: 200,
+      error: { code: 'INVALID_RESPONSE', message: FALLBACK_ERROR_MESSAGE },
+    });
+  });
+
+  it('merges custom headers with Content-Type on JSON POST and forwards them on GET', async () => {
+    const fetchStub = stubFetch(async () => jsonResponse(200, { ok: true }));
+
+    await requestJson({
+      path: '/admin/reset',
+      method: 'POST',
+      body: { stock: 10 },
+      headers: { 'x-admin-key': 'secret-1' },
+    });
+    await requestJson({ path: '/ping', headers: { 'x-trace': 'abc' } });
+
+    const postHeaders = new Headers(fetchStub.mock.calls[0]?.[1]?.headers);
+    expect(postHeaders.get('Content-Type')).toBe('application/json');
+    expect(postHeaders.get('x-admin-key')).toBe('secret-1');
+    const getHeaders = new Headers(fetchStub.mock.calls[1]?.[1]?.headers);
+    expect(getHeaders.get('x-trace')).toBe('abc');
+    expect(getHeaders.get('Content-Type')).toBeNull();
+  });
+
   it('returns a status 0 NETWORK_ERROR result when fetch rejects', async () => {
     stubFetch(async () => {
       throw new TypeError('Failed to fetch');

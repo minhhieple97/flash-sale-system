@@ -111,7 +111,7 @@ describe('CheckoutService.attemptPurchase', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it('answers 503 TEMPORARY_FAILURE without scheduling when the sale is not configured', async () => {
+  it('answers 503 TEMPORARY_FAILURE and logs warn without scheduling when the sale is not configured', async () => {
     const { service, reserve, scheduleReservation } = buildService();
     reserve.mockResolvedValue('SALE_NOT_CONFIGURED');
 
@@ -119,6 +119,8 @@ describe('CheckoutService.attemptPurchase', () => {
 
     expectTemporaryFailure(error);
     expect(scheduleReservation).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain(ACTIVE_FLASH_SALE_ID);
   });
 
   it('answers 503 TEMPORARY_FAILURE when the reservation was released after a failed enqueue', async () => {
@@ -178,5 +180,34 @@ describe('CheckoutService.attemptPurchase', () => {
       ['SOLD_OUT'],
       [ERROR_CODES.TEMPORARY_FAILURE],
     ]);
+  });
+
+  it.each([
+    new TypeError('cannot read properties of undefined'),
+    new RangeError('out of range'),
+    new ReferenceError('missing ref'),
+    new SyntaxError('bad syntax'),
+  ])(
+    'rethrows %p directly without converting to 503 or recording TEMPORARY_FAILURE',
+    async (bug) => {
+      const { service, reserve, recordPurchaseAttempt } = buildService();
+      reserve.mockRejectedValue(bug);
+
+      await expect(service.attemptPurchase(USER_ID)).rejects.toBe(bug);
+      expect(recordPurchaseAttempt).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    new Error('Unexpected reply from attemptPurchase: WAT'),
+    new Error('Unexpected attemptPurchase reply: WAT'),
+  ])('rethrows corrupt Lua reply error %p directly without converting to 503', async (err) => {
+    const { service, reserve, recordPurchaseAttempt } = buildService();
+    reserve.mockRejectedValue(err);
+
+    await expect(service.attemptPurchase(USER_ID)).rejects.toBe(err);
+    expect(recordPurchaseAttempt).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
   });
 });

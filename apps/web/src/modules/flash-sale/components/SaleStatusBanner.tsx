@@ -3,6 +3,7 @@ import { Alert } from '@/shared/components/Alert';
 import { Card } from '@/shared/components/Card';
 import { StatusPill } from '@/shared/components/StatusPill';
 import { SALE_STATE_PRESENTATION } from '../constants/flash-sale.constants';
+import { useEffectiveSaleState } from '../hooks/use-effective-sale-state';
 import type { FlashSaleFeed, FlashSaleStatus } from '../types/flash-sale.types';
 import { CountdownTimer } from './CountdownTimer';
 import { StockProgressBar } from './StockProgressBar';
@@ -21,7 +22,8 @@ function LoadingPlaceholder(): ReactElement {
 }
 
 function SaleDetails({ sale }: { sale: FlashSaleStatus }): ReactElement {
-  const presentation = SALE_STATE_PRESENTATION[sale.saleState];
+  const effectiveState = useEffectiveSaleState(sale) ?? sale.saleState;
+  const presentation = SALE_STATE_PRESENTATION[effectiveState];
   const countdown = presentation.countdown;
   return (
     <div className="space-y-4">

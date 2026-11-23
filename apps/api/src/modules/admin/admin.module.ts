@@ -1,9 +1,9 @@
 import { type DynamicModule, Module } from '@nestjs/common';
 import { CommonModule } from '../../common/common.module';
 import type { AppRole } from '../../config/env.interface';
-import { FlashSalesModule } from '../flash-sales/flash-sales.module';
+import { FlashSalesCoreModule } from '../flash-sales/flash-sales-core.module';
 import { OrdersCoreModule } from '../orders/orders.module';
-import { ProductsModule } from '../products/products.module';
+import { ProductsCoreModule } from '../products/products-core.module';
 import { SaleLedgerModule } from '../sale-ledger';
 import {
   BOOTSTRAP_SWEEP_TRIGGER,
@@ -21,8 +21,8 @@ import { SaleMutationLock } from './services/sale-mutation-lock.service';
 
 const ADMIN_IMPORTS = [
   CommonModule,
-  ProductsModule,
-  FlashSalesModule,
+  ProductsCoreModule,
+  FlashSalesCoreModule,
   OrdersCoreModule,
   SaleLedgerModule,
 ];

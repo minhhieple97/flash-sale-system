@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import type { DataSource, EntityManager } from 'typeorm';
 import type { NormalizedUserId } from '../../../common/interfaces/user-id.interface';
-import type { ConfirmedReservation, ReservationRef } from '../../sale-ledger';
+import type { ReservationRef } from '../../sale-ledger';
 import { CONFIRMED_ORDER_STATUS } from '../constants/orders.constants';
 import { OrderPersistenceRejectedError } from '../errors/order-persistence-rejected.error';
 import type {
@@ -22,8 +22,6 @@ const DECREMENT_STOCK_SQL = `
   WHERE id = $1 AND remaining_stock > 0`;
 const FIND_ORDER_ID_SQL = 'SELECT id FROM orders WHERE flash_sale_id = $1 AND user_id = $2';
 const HAS_CONFIRMED_SQL = 'SELECT 1 FROM orders WHERE flash_sale_id = $1 AND status = $2 LIMIT 1';
-const LIST_CONFIRMED_SQL =
-  'SELECT id, user_id FROM orders WHERE flash_sale_id = $1 AND status = $2 ORDER BY created_at, id';
 const LIST_CONFIRMED_FIRST_SQL = `
   SELECT id, user_id, created_at::text AS created_at FROM orders
   WHERE flash_sale_id = $1 AND status = $2
@@ -37,11 +35,8 @@ interface IdRow {
   id: string;
 }
 
-interface ConfirmedRow extends IdRow {
+interface ConfirmedBatchRow extends IdRow {
   user_id: string;
-}
-
-interface ConfirmedBatchRow extends ConfirmedRow {
   created_at: string;
 }
 
@@ -72,14 +67,6 @@ export class OrdersRepository {
   async findConfirmedOrderId(saleId: string, userId: NormalizedUserId): Promise<string | null> {
     const rows: IdRow[] = await this.dataSource.query(FIND_ORDER_ID_SQL, [saleId, userId]);
     return rows[0]?.id ?? null;
-  }
-
-  async listConfirmed(saleId: string): Promise<readonly ConfirmedReservation[]> {
-    const rows: ConfirmedRow[] = await this.dataSource.query(LIST_CONFIRMED_SQL, [
-      saleId,
-      CONFIRMED_ORDER_STATUS,
-    ]);
-    return rows.map((row) => ({ userId: row.user_id as NormalizedUserId, orderId: row.id }));
   }
 
   async hasConfirmedOrders(saleId: string): Promise<boolean> {

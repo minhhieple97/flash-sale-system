@@ -23,5 +23,6 @@ export type ScenarioResetState =
 
 export interface ScenarioResetHandle {
   state: ScenarioResetState;
-  apply: (preset: ScenarioPreset) => Promise<void>;
+  requiresAdminKey: boolean;
+  apply: (preset: ScenarioPreset, adminKey?: string) => Promise<void>;
 }

@@ -86,6 +86,7 @@ export class LedgerMaintenanceService implements OnApplicationBootstrap, OnModul
 
   private async runBootSequence(): Promise<void> {
     await this.hydration.hydrate();
+    await this.resets.resumeProcessing();
     if (this.bootstrapSweepTrigger === null) return;
     await this.sweeper.sweepOrphans(ACTIVE_FLASH_SALE_ID, this.bootstrapSweepTrigger);
   }
@@ -99,6 +100,7 @@ export class LedgerMaintenanceService implements OnApplicationBootstrap, OnModul
       this.flashSales.invalidateCache();
       this.logger.warn(`Restored lost ledger state of sale ${ACTIVE_FLASH_SALE_ID}`);
     }
+    await this.resets.resumeProcessing();
     const sweep = await this.sweeper.sweepOrphans(ACTIVE_FLASH_SALE_ID, 'INTERVAL');
     return { status: 'RAN', reset, hydration, sweep };
   }

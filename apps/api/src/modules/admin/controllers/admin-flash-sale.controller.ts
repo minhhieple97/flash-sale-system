@@ -7,6 +7,7 @@ import {
   UseGuards,
   ValidationPipe,
 } from '@nestjs/common';
+import { RateLimitGuard } from '../../../common/guards/rate-limit.guard';
 import { FlashSaleStatusResponseDto } from '../../flash-sales/dto/flash-sale-status.response.dto';
 import {
   ADMIN_FLASH_SALES_ROUTE,
@@ -18,7 +19,7 @@ import { AdminEndpointsGuard } from '../guards/admin-endpoints.guard';
 import { FlashSaleResetService } from '../services/flash-sale-reset.service';
 
 @Controller(ADMIN_FLASH_SALES_ROUTE)
-@UseGuards(AdminEndpointsGuard)
+@UseGuards(AdminEndpointsGuard, RateLimitGuard)
 export class AdminFlashSaleController {
   constructor(private readonly resetService: FlashSaleResetService) {}
 

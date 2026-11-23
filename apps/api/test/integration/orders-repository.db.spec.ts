@@ -181,36 +181,6 @@ describe('OrdersRepository', () => {
     });
   });
 
-  describe('listConfirmed', () => {
-    it('lists only the orders of the requested sale with their user ids', async () => {
-      const saleId = await seedSale(5);
-      const otherSaleId = await seedSale(5);
-      const alice = refOf(saleId, 'alice');
-      const bob = refOf(saleId, 'bob');
-      await repository.persistConfirmedOrder(alice);
-      await repository.persistConfirmedOrder(bob);
-      await repository.persistConfirmedOrder(refOf(otherSaleId, 'carol'));
-
-      const confirmed = await repository.listConfirmed(saleId);
-
-      expect(confirmed).toHaveLength(2);
-      expect(confirmed).toEqual(
-        expect.arrayContaining([
-          { userId: alice.userId, orderId: alice.orderId },
-          { userId: bob.userId, orderId: bob.orderId },
-        ]),
-      );
-    });
-
-    it('returns an empty list for a sale without orders', async () => {
-      const saleId = await seedSale(5);
-
-      const confirmed = await repository.listConfirmed(saleId);
-
-      expect(confirmed).toEqual([]);
-    });
-  });
-
   describe('hasConfirmedOrders and listConfirmedBatch', () => {
     it('reports whether confirmed orders exist for a sale', async () => {
       const saleId = await seedSale(5);

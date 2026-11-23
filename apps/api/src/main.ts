@@ -8,8 +8,10 @@ import { configureApp } from './app.setup';
 import { HTTP_BODY_LIMIT_BYTES, HTTP_LISTEN_HOST } from './common/constants/common.constants';
 import type { AppEnv } from './config/env.interface';
 import { parseAppRole, parseTrustProxy } from './config/env.schema';
+import { loadDotEnvFiles } from './config/load-dotenv.util';
 
 async function bootstrap(): Promise<void> {
+  loadDotEnvFiles();
   const role = parseAppRole(process.env.APP_ROLE);
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.forRole(role),

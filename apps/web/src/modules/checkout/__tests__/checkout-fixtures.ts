@@ -27,12 +27,18 @@ export const OUTCOME_CASES: readonly PurchaseOutcomeCase[] = [
     title: 'Sale has not started',
   },
   { status: 422, code: 'SALE_ENDED', message: 'The flash sale has ended', title: 'Sale has ended' },
+  {
+    status: 429,
+    code: 'RATE_LIMITED',
+    message: 'Too many requests; please retry shortly',
+    title: 'Too many requests. Please wait a moment and try again.',
+  },
 ];
 
-export function reservedResponse(userId: string): Response {
+export function reservedResponse(userId: string, orderId = ORDER_ID): Response {
   return jsonResponse(202, {
     code: 'RESERVED',
-    orderId: ORDER_ID,
+    orderId,
     userId,
     message: 'Your unit is reserved; the order is being confirmed',
   });
@@ -45,6 +51,28 @@ export function purchaseBody(call: unknown[]): unknown {
 
 export const SALE_STARTS_AT = '2026-03-01T12:00:10.000Z';
 export const SALE_SERVER_TIME = '2026-03-01T12:00:00.000Z';
+const HOUR_MS = 3_600_000;
+const TIME_BY_STATE: Record<
+  SaleState,
+  Pick<FlashSaleStatus, 'startsAt' | 'endsAt' | 'remainingStock'>
+> = {
+  UPCOMING: { startsAt: SALE_STARTS_AT, endsAt: '2026-03-01T13:00:00.000Z', remainingStock: 37 },
+  ACTIVE: {
+    startsAt: new Date(Date.parse(SALE_SERVER_TIME) - HOUR_MS).toISOString(),
+    endsAt: new Date(Date.parse(SALE_SERVER_TIME) + HOUR_MS).toISOString(),
+    remainingStock: 37,
+  },
+  SOLD_OUT: {
+    startsAt: new Date(Date.parse(SALE_SERVER_TIME) - HOUR_MS).toISOString(),
+    endsAt: new Date(Date.parse(SALE_SERVER_TIME) + HOUR_MS).toISOString(),
+    remainingStock: 0,
+  },
+  ENDED: {
+    startsAt: new Date(Date.parse(SALE_SERVER_TIME) - 2 * HOUR_MS).toISOString(),
+    endsAt: new Date(Date.parse(SALE_SERVER_TIME) - HOUR_MS).toISOString(),
+    remainingStock: 37,
+  },
+};
 
 export function saleWithState(
   saleState: SaleState,
@@ -54,9 +82,7 @@ export function saleWithState(
     saleId: 'sale-1',
     saleState,
     totalStock: 100,
-    remainingStock: 37,
-    startsAt: SALE_STARTS_AT,
-    endsAt: '2026-03-01T13:00:00.000Z',
+    ...TIME_BY_STATE[saleState],
     serverTime: SALE_SERVER_TIME,
     ...overrides,
   };

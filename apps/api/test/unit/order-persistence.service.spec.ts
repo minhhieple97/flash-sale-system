@@ -216,12 +216,12 @@ describe('OrderPersistenceService', () => {
   });
 
   describe('lifecycle', () => {
-    it('resumes the queue on bootstrap, so a reset that crashed cannot leave it paused', async () => {
+    it('does not resume the queue on bootstrap so resume stays fenced under the maintenance lock', async () => {
       const { service, queue } = buildPersistenceService();
 
       await service.onApplicationBootstrap();
 
-      expect(queue.resume).toHaveBeenCalledTimes(1);
+      expect(queue.resume).not.toHaveBeenCalled();
     });
 
     it('closes the queue so no producer outlives the module', async () => {

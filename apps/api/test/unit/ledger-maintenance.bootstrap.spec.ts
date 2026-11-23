@@ -42,17 +42,25 @@ function buildBootstrapService(options?: {
   );
   const acquireMaintenanceLease = jest.fn<Promise<boolean>, [MaintenanceLease]>(async () => true);
   const releaseMaintenanceLease = jest.fn<Promise<boolean>, [string, string]>(async () => true);
+  const resumeProcessing = jest.fn<Promise<void>, []>(async () => undefined);
   const service = new LedgerMaintenanceService(
     new SaleMutationLock(),
     { hydrate, restoreIfLost: jest.fn() } as unknown as FlashSaleHydrationService,
     { sweepOrphans } as unknown as OrphanSweeper,
     { invalidateCache: jest.fn() } as unknown as FlashSalesService,
-    { completePendingReset: jest.fn() } as unknown as FlashSaleResetService,
+    { completePendingReset: jest.fn(), resumeProcessing } as unknown as FlashSaleResetService,
     options?.intervalMs ?? MAINTENANCE_DISABLED,
     { acquireMaintenanceLease, releaseMaintenanceLease } as unknown as SaleLedgerLeaseRepository,
     options?.trigger,
   );
-  return { service, hydrate, sweepOrphans, acquireMaintenanceLease, releaseMaintenanceLease };
+  return {
+    service,
+    hydrate,
+    sweepOrphans,
+    resumeProcessing,
+    acquireMaintenanceLease,
+    releaseMaintenanceLease,
+  };
 }
 
 describe('LedgerMaintenanceService bootstrap coordination', () => {
@@ -77,6 +85,7 @@ describe('LedgerMaintenanceService bootstrap coordination', () => {
 
     expect(built.acquireMaintenanceLease).toHaveBeenCalledTimes(1);
     expect(built.hydrate).toHaveBeenCalledTimes(1);
+    expect(built.resumeProcessing).toHaveBeenCalledTimes(1);
     expect(built.sweepOrphans).not.toHaveBeenCalled();
     expect(built.releaseMaintenanceLease).toHaveBeenCalledTimes(1);
   });
@@ -88,6 +97,7 @@ describe('LedgerMaintenanceService bootstrap coordination', () => {
     await built.service.onApplicationBootstrap();
 
     expect(built.hydrate).toHaveBeenCalledTimes(1);
+    expect(built.resumeProcessing).toHaveBeenCalledTimes(1);
     expect(built.sweepOrphans).toHaveBeenCalledWith(ACTIVE_FLASH_SALE_ID, 'INTERVAL');
     expect(jest.getTimerCount()).toBe(1);
   });
@@ -127,6 +137,7 @@ describe('LedgerMaintenanceService bootstrap coordination', () => {
 
     expect(built.acquireMaintenanceLease).toHaveBeenCalledTimes(BOOT_LEASE_MAX_ATTEMPTS);
     expect(built.hydrate).not.toHaveBeenCalled();
+    expect(built.resumeProcessing).not.toHaveBeenCalled();
     expect(built.sweepOrphans).not.toHaveBeenCalled();
     expect(built.releaseMaintenanceLease).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledTimes(1);
@@ -139,6 +150,7 @@ describe('LedgerMaintenanceService bootstrap coordination', () => {
     built.hydrate.mockRejectedValueOnce(new Error('db down'));
 
     await expect(built.service.onApplicationBootstrap()).rejects.toThrow('db down');
+    expect(built.resumeProcessing).not.toHaveBeenCalled();
     expect(built.releaseMaintenanceLease).toHaveBeenCalledTimes(1);
   });
 });

@@ -55,6 +55,10 @@ export class FlashSaleResetService {
     return 'COMPLETED';
   }
 
+  async resumeProcessing(): Promise<void> {
+    await this.orderPersistence.resumeProcessing();
+  }
+
   private async runReset(plan: ResetFlashSalePlan): Promise<void> {
     try {
       await this.orderPersistence.drainPendingJobs();

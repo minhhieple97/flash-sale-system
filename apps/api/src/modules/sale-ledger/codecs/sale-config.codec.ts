@@ -33,7 +33,7 @@ export function decodeSnapshot(
   return {
     saleId: requireText(hash[FIELDS.saleId], FIELDS.saleId),
     totalStock: requireNumber(hash[FIELDS.totalStock], FIELDS.totalStock),
-    remainingStock: requireNumber(stock, STOCK_FIELD),
+    remainingStock: Math.max(0, requireNumber(stock, STOCK_FIELD)),
     startsAtMs: requireNumber(hash[FIELDS.startTimeMs], FIELDS.startTimeMs),
     endsAtMs: requireNumber(hash[FIELDS.endTimeMs], FIELDS.endTimeMs),
   };

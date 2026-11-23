@@ -3,10 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { jsonResponse, stubFetch } from '@/test-support/fetch-stub';
 import { orderStatusResponse } from '@/test-support/order-status-stub';
 import { useOrderConfirmationPoller } from '../hooks/use-order-confirmation-poller';
+import type { PendingReservation } from '../types/orders.types';
 
 const CLOCK_FAKES = ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] as const;
 const USER_ID = 'alice';
 const ORDER_ID = 'order-123';
+const SESSION: PendingReservation = { userId: USER_ID, orderId: ORDER_ID };
+const POLL_MS = 1_000;
+const MAX_ATTEMPTS = 30;
 
 function advance(ms: number): Promise<void> {
   return act(async () => {
@@ -54,7 +58,7 @@ describe('useOrderConfirmationPoller start and cadence', () => {
   it('is polling at once and sends the first request immediately', async () => {
     const fetchStub = stubFetch(async () => reserved());
 
-    const { result } = renderHook(() => useOrderConfirmationPoller(USER_ID));
+    const { result } = renderHook(() => useOrderConfirmationPoller(SESSION));
     expect(result.current).toEqual({ phase: 'polling' });
     await advance(0);
 
@@ -63,36 +67,30 @@ describe('useOrderConfirmationPoller start and cadence', () => {
     expect(result.current).toEqual({ phase: 'polling' });
   });
 
-  it('asks again 400 ms after the previous answer and not before', async () => {
+  it('asks again 1000 ms after the previous answer and not before', async () => {
     const fetchStub = stubFetch(async () => reserved());
-    renderHook(() => useOrderConfirmationPoller(USER_ID));
+    renderHook(() => useOrderConfirmationPoller(SESSION));
     await advance(0);
-
-    await advance(399);
+    await advance(POLL_MS - 1);
     expect(fetchStub).toHaveBeenCalledTimes(1);
     await advance(1);
-
     expect(fetchStub).toHaveBeenCalledTimes(2);
   });
 
   it('does not rerender when repeated answers keep the order in the polling state', async () => {
     const fetchStub = stubFetch(async () => reserved());
-    const render = vi.fn(() => useOrderConfirmationPoller(USER_ID));
+    const render = vi.fn(() => useOrderConfirmationPoller(SESSION));
     renderHook(render);
     const initialRenders = render.mock.calls.length;
-
-    await advance(1200);
-
+    await advance(POLL_MS * 3);
     expect(fetchStub).toHaveBeenCalledTimes(4);
     expect(render).toHaveBeenCalledTimes(initialRenders);
   });
 
   it('URL-encodes the user id in the request path', async () => {
     const fetchStub = stubFetch(async () => reserved());
-
-    renderHook(() => useOrderConfirmationPoller('a+b@x.io'));
+    renderHook(() => useOrderConfirmationPoller({ userId: 'a+b@x.io', orderId: ORDER_ID }));
     await advance(0);
-
     expect(fetchStub.mock.calls[0]?.[0]).toBe('/api/v1/orders/user/a%2Bb%40x.io');
   });
 });
@@ -103,28 +101,24 @@ describe('useOrderConfirmationPoller terminal answers', () => {
       reserved,
       () => orderStatusResponse('CONFIRMED', USER_ID, ORDER_ID),
     ]);
-    const { result } = renderHook(() => useOrderConfirmationPoller(USER_ID));
+    const { result } = renderHook(() => useOrderConfirmationPoller(SESSION));
     await advance(0);
-    await advance(400);
+    await advance(POLL_MS);
 
     expect(result.current).toEqual({ phase: 'confirmed', orderId: ORDER_ID });
-    const requestsAtConfirmation = fetchStub.mock.calls.length;
     await advance(4000);
-
-    expect(fetchStub).toHaveBeenCalledTimes(requestsAtConfirmation);
-    expect(requestsAtConfirmation).toBe(2);
+    expect(fetchStub).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);
   });
 
   it('reports released and stops when the reservation disappears', async () => {
     const fetchStub = answerInOrder([reserved, () => orderStatusResponse('NONE', USER_ID)]);
-    const { result } = renderHook(() => useOrderConfirmationPoller(USER_ID));
+    const { result } = renderHook(() => useOrderConfirmationPoller(SESSION));
     await advance(0);
-    await advance(400);
+    await advance(POLL_MS);
 
     expect(result.current).toEqual({ phase: 'released' });
     await advance(4000);
-
     expect(fetchStub).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -139,12 +133,12 @@ describe('useOrderConfirmationPoller terminal answers', () => {
       if (call === 2) return failure();
       return call === 1 ? reserved() : orderStatusResponse('CONFIRMED', USER_ID, ORDER_ID);
     });
-    const { result } = renderHook(() => useOrderConfirmationPoller(USER_ID));
+    const { result } = renderHook(() => useOrderConfirmationPoller(SESSION));
     await advance(0);
 
-    await advance(400);
+    await advance(POLL_MS);
     expect(result.current).toEqual({ phase: 'polling' });
-    await advance(400);
+    await advance(POLL_MS);
 
     expect(fetchStub).toHaveBeenCalledTimes(3);
     expect(result.current).toEqual({ phase: 'confirmed', orderId: ORDER_ID });
@@ -155,31 +149,31 @@ describe('useOrderConfirmationPoller attempt budget', () => {
   it.each([
     ['RESERVED answers', reserved],
     ['503 answers', unavailable],
-  ])('times out on the 75th attempt of %s and sends no 76th', async (_label, answer) => {
+  ])('times out on the 30th attempt of %s and sends no 31st', async (_label, answer) => {
     const fetchStub = stubFetch(async () => answer());
-    const { result } = renderHook(() => useOrderConfirmationPoller(USER_ID));
+    const { result } = renderHook(() => useOrderConfirmationPoller(SESSION));
     await advance(0);
 
-    await advance(400 * 73);
-    expect(fetchStub).toHaveBeenCalledTimes(74);
+    await advance(POLL_MS * (MAX_ATTEMPTS - 2));
+    expect(fetchStub).toHaveBeenCalledTimes(MAX_ATTEMPTS - 1);
     expect(result.current).toEqual({ phase: 'polling' });
-    await advance(400);
+    await advance(POLL_MS);
 
-    expect(fetchStub).toHaveBeenCalledTimes(75);
+    expect(fetchStub).toHaveBeenCalledTimes(MAX_ATTEMPTS);
     expect(result.current).toEqual({ phase: 'timed-out' });
     await advance(10_000);
-    expect(fetchStub).toHaveBeenCalledTimes(75);
+    expect(fetchStub).toHaveBeenCalledTimes(MAX_ATTEMPTS);
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('confirms on the 75th attempt instead of timing out', async () => {
-    const answers = Array.from({ length: 74 }, () => reserved);
+  it('confirms on the 30th attempt instead of timing out', async () => {
+    const answers = Array.from({ length: MAX_ATTEMPTS - 1 }, () => reserved);
     answers.push(() => orderStatusResponse('CONFIRMED', USER_ID, ORDER_ID));
     answerInOrder(answers);
-    const { result } = renderHook(() => useOrderConfirmationPoller(USER_ID));
+    const { result } = renderHook(() => useOrderConfirmationPoller(SESSION));
     await advance(0);
 
-    await advance(400 * 74);
+    await advance(POLL_MS * (MAX_ATTEMPTS - 1));
 
     expect(result.current).toEqual({ phase: 'confirmed', orderId: ORDER_ID });
   });
@@ -191,27 +185,49 @@ describe('useOrderConfirmationPoller lifecycle', () => {
       () => orderStatusResponse('CONFIRMED', USER_ID, ORDER_ID),
       reserved,
     ]);
-    const { result, rerender } = renderHook(({ id }) => useOrderConfirmationPoller(id), {
-      initialProps: { id: USER_ID as string | null },
-    });
+    const { result, rerender } = renderHook(
+      ({ reservation }) => useOrderConfirmationPoller(reservation),
+      { initialProps: { reservation: SESSION as PendingReservation | null } },
+    );
     await advance(0);
     expect(result.current.phase).toBe('confirmed');
 
-    rerender({ id: 'bob' });
+    rerender({ reservation: { userId: 'bob', orderId: ORDER_ID } });
     expect(result.current).toEqual({ phase: 'polling' });
     await advance(0);
 
     expect(fetchStub.mock.calls.at(-1)?.[0]).toBe('/api/v1/orders/user/bob');
   });
 
-  it('returns to idle and stops when the user id becomes null', async () => {
-    const fetchStub = stubFetch(async () => reserved());
-    const { result, rerender } = renderHook(({ id }) => useOrderConfirmationPoller(id), {
-      initialProps: { id: USER_ID as string | null },
-    });
+  it('restarts polling for the same user when a new orderId arrives after released', async () => {
+    const fetchStub = answerInOrder([
+      () => orderStatusResponse('NONE', USER_ID),
+      () => orderStatusResponse('CONFIRMED', USER_ID, 'order-2'),
+    ]);
+    const { result, rerender } = renderHook(
+      ({ reservation }) => useOrderConfirmationPoller(reservation),
+      { initialProps: { reservation: { userId: USER_ID, orderId: 'order-1' } } },
+    );
+    await advance(0);
+    expect(result.current).toEqual({ phase: 'released' });
+
+    rerender({ reservation: { userId: USER_ID, orderId: 'order-2' } });
+    expect(result.current).toEqual({ phase: 'polling' });
     await advance(0);
 
-    rerender({ id: null });
+    expect(fetchStub).toHaveBeenCalledTimes(2);
+    expect(result.current).toEqual({ phase: 'confirmed', orderId: 'order-2' });
+  });
+
+  it('returns to idle and stops when the reservation becomes null', async () => {
+    const fetchStub = stubFetch(async () => reserved());
+    const { result, rerender } = renderHook(
+      ({ reservation }) => useOrderConfirmationPoller(reservation),
+      { initialProps: { reservation: SESSION as PendingReservation | null } },
+    );
+    await advance(0);
+
+    rerender({ reservation: null });
     await advance(4000);
 
     expect(result.current).toEqual({ phase: 'idle' });
@@ -220,7 +236,7 @@ describe('useOrderConfirmationPoller lifecycle', () => {
 
   it('stops requesting after unmount', async () => {
     const fetchStub = stubFetch(async () => reserved());
-    const { unmount } = renderHook(() => useOrderConfirmationPoller(USER_ID));
+    const { unmount } = renderHook(() => useOrderConfirmationPoller(SESSION));
     await advance(0);
 
     unmount();

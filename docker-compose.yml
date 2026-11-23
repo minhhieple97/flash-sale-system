@@ -87,6 +87,7 @@ services:
     profiles: ["stress"]
     environment:
       BASE_URL: http://api:3000
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-}
     volumes:
       - ./tests/stress:/scripts:ro
     command: ["run", "/scripts/oversell-stress.k6.js"]

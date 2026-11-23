@@ -84,10 +84,19 @@ describe('AppModule (e2e)', () => {
     expect(current.body).toMatchObject({ saleState: 'ACTIVE', totalStock: 7, remainingStock: 7 });
   });
 
-  it('resets with every default when the request carries no body and no content-type', async () => {
+  it('answers 415 when an admin reset request carries no body and no content-type', async () => {
     const response = await request(app.getHttpServer()).post('/api/v1/admin/flash-sales/reset');
 
     expect(response.request.getHeader('content-type')).toBeUndefined();
+    expect(response.status).toBe(415);
+    expect(response.body.code).toBe('UNSUPPORTED_MEDIA_TYPE');
+  });
+
+  it('resets with every default when an empty JSON object is sent', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/admin/flash-sales/reset')
+      .send({});
+
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
       saleState: 'ACTIVE',

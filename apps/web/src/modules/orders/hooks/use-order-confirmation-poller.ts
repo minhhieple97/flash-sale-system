@@ -2,11 +2,12 @@ import { useMemo, useState } from 'react';
 import { type PollTask, usePolling } from '@/shared/hooks/use-polling';
 import { fetchOrderStatus } from '../api/orders.api';
 import { CONFIRMATION_POLL_INTERVAL_MS } from '../constants/orders.constants';
-import type { ConfirmationState } from '../types/orders.types';
+import type { ConfirmationState, PendingReservation } from '../types/orders.types';
 import { nextConfirmation } from '../utils/confirmation-transition.util';
 
 interface WatchSession {
   userId: string;
+  orderId: string;
 }
 
 interface Reported {
@@ -32,11 +33,15 @@ function buildTask(
   };
 }
 
-export function useOrderConfirmationPoller(userId: string | null): ConfirmationState {
+export function useOrderConfirmationPoller(
+  reservation: PendingReservation | null,
+): ConfirmationState {
   const [reported, setReported] = useState<Reported | null>(null);
+  const userId = reservation?.userId;
+  const orderId = reservation?.orderId;
   const session = useMemo<WatchSession | null>(
-    () => (userId === null ? null : { userId }),
-    [userId],
+    () => (userId === undefined || orderId === undefined ? null : { userId, orderId }),
+    [userId, orderId],
   );
   const task = useMemo<PollTask | null>(
     () =>

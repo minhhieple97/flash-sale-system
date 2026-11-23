@@ -59,4 +59,8 @@ describe('sale config codec', () => {
   it('throws when the stock key is missing instead of reading a sold-out sale', () => {
     expect(() => decodeSnapshot(encodeConfigFields(buildSnapshot()), null)).toThrow('stock');
   });
+
+  it('clamps negative raw stock to 0 while an over-reserved rollback is pending', () => {
+    expect(decodeSnapshot(CORE_HASH, '-2')).toEqual({ ...DECODED_CORE, remainingStock: 0 });
+  });
 });

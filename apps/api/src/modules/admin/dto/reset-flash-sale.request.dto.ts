@@ -1,4 +1,5 @@
-import { IsInt, IsISO8601, IsOptional, Max, Min } from 'class-validator';
+import { IsInt, IsISO8601, IsOptional, Matches, Max, Min } from 'class-validator';
+import { RFC_3339_MESSAGE, RFC_3339_TIMESTAMP } from '../../../config/env.schema';
 import {
   MAX_RESET_DURATION_SECONDS,
   MAX_RESET_OFFSET_SECONDS,
@@ -29,10 +30,12 @@ export class ResetFlashSaleRequestDto implements ResetFlashSaleInput {
   durationSeconds?: number;
 
   @IsOptional()
-  @IsISO8601({ strict: true })
+  @Matches(RFC_3339_TIMESTAMP, { message: RFC_3339_MESSAGE })
+  @IsISO8601({ strict: true }, { message: RFC_3339_MESSAGE })
   startsAt?: string;
 
   @IsOptional()
-  @IsISO8601({ strict: true })
+  @Matches(RFC_3339_TIMESTAMP, { message: RFC_3339_MESSAGE })
+  @IsISO8601({ strict: true }, { message: RFC_3339_MESSAGE })
   endsAt?: string;
 }

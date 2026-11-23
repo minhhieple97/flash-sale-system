@@ -2,6 +2,7 @@ import type { Tone } from '@/shared/types/tone.types';
 import type { ScenarioPreset } from '../types/simulation.types';
 
 export const RESET_FLASH_SALE_PATH = '/admin/flash-sales/reset';
+export const ADMIN_KEY_HEADER = 'x-admin-key';
 export const DRAWER_TOGGLE_LABEL = 'Demo scenarios';
 
 export type ResetErrorCode = 'NOT_FOUND' | 'UNAUTHORIZED';

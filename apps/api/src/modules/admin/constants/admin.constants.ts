@@ -22,6 +22,10 @@ export const RESET_VALIDATION_OPTIONS: ValidationPipeOptions = {
 };
 
 export const ADMIN_ENDPOINTS_DISABLED_MESSAGE = 'Not found';
+export const UNSUPPORTED_MEDIA_TYPE_CODE = 'UNSUPPORTED_MEDIA_TYPE';
+export const UNSUPPORTED_MEDIA_TYPE_MESSAGE = 'Content-Type must be application/json';
+export const UNAUTHENTICATED_ADMIN_PRODUCTION_WARNING =
+  'ENABLE_ADMIN_ENDPOINTS is true in production without ADMIN_API_KEY; set ADMIN_API_KEY to require authentication';
 
 export const LEDGER_MAINTENANCE_INTERVAL_MS = 30_000;
 export const MAINTENANCE_LEASE_TTL_MS = 25_000;

@@ -50,7 +50,7 @@ describe('CheckoutFormCard order confirmation', () => {
     render(<CheckoutFormCard sale={saleWithState('ACTIVE')} />);
 
     await buyAs('alice');
-    await advance(400);
+    await advance(1_000);
 
     expect(screen.getByText('Reserved! Confirming your order...')).toBeInTheDocument();
     expect(screen.queryByText('Order confirmed')).toBeNull();
@@ -76,7 +76,7 @@ describe('CheckoutFormCard order confirmation', () => {
     render(<CheckoutFormCard sale={saleWithState('ACTIVE')} />);
     await buyAs('alice');
 
-    await advance(800);
+    await advance(2_000);
 
     const feedback = screen.getByRole('status');
     expect(feedback).toHaveTextContent('Order confirmed');
@@ -116,23 +116,23 @@ describe('CheckoutFormCard order confirmation', () => {
     render(<CheckoutFormCard sale={saleWithState('ACTIVE')} />);
     await buyAs('alice');
 
-    await advance(400);
+    await advance(1_000);
 
     expect(screen.getByRole('alert')).toHaveTextContent('Reservation released');
     expect(screen.queryByText('Reserved! Confirming your order...')).toBeNull();
   });
 
-  it('shows Still confirming after 75 attempts without a final answer', async () => {
+  it('shows Still confirming after 30 attempts without a final answer', async () => {
     const fetchStub = stubCheckoutApi(() => orderStatusResponse('RESERVED', 'alice', ORDER_ID));
     render(<CheckoutFormCard sale={saleWithState('ACTIVE')} />);
     await buyAs('alice');
 
-    await advance(400 * 74);
+    await advance(1_000 * 29);
 
     expect(screen.getByRole('status')).toHaveTextContent('Still confirming');
-    expect(orderRequests(fetchStub)).toBe(75);
+    expect(orderRequests(fetchStub)).toBe(30);
     await advance(5000);
-    expect(orderRequests(fetchStub)).toBe(75);
+    expect(orderRequests(fetchStub)).toBe(30);
   });
 
   it('does not poll after a rejected purchase', async () => {
@@ -145,5 +145,42 @@ describe('CheckoutFormCard order confirmation', () => {
     await advance(4000);
 
     expect(fetchStub).toHaveBeenCalledTimes(1);
+  });
+
+  it('transitions cleanly through pending and confirms when retrying after timed-out', async () => {
+    let purchases = 0;
+    let order2Calls = 0;
+    stubFetch(async (url) => {
+      if (url === PURCHASE_URL) {
+        purchases += 1;
+        return reservedResponse('alice', `order-${purchases}`);
+      }
+      if (purchases === 1) return orderStatusResponse('RESERVED', 'alice', 'order-1');
+      order2Calls += 1;
+      return orderStatusResponse(order2Calls === 1 ? 'RESERVED' : 'CONFIRMED', 'alice', 'order-2');
+    });
+    render(<CheckoutFormCard sale={saleWithState('ACTIVE')} />);
+    await buyAs('alice');
+    await advance(1_000 * 29);
+    expect(screen.getByRole('status')).toHaveTextContent('Still confirming');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Buy Now' }));
+    await advance(0);
+    expect(screen.getByText('Reserved! Confirming your order...')).toBeInTheDocument();
+    expect(screen.getByText(/order-2/)).toBeInTheDocument();
+
+    await advance(1_000);
+    expect(screen.getByRole('status')).toHaveTextContent('Order confirmed');
+    expect(screen.getByText('order-2')).toBeInTheDocument();
+  });
+
+  it('accepts a reconciled CONFIRMED orderId even if it differs from the reservation orderId', async () => {
+    stubCheckoutApi(() => orderStatusResponse('CONFIRMED', 'alice', 'adopted-order-99'));
+    render(<CheckoutFormCard sale={saleWithState('ACTIVE')} />);
+
+    await buyAs('alice');
+
+    expect(screen.getByRole('status')).toHaveTextContent('Order confirmed');
+    expect(screen.getByText('adopted-order-99')).toBeInTheDocument();
   });
 });

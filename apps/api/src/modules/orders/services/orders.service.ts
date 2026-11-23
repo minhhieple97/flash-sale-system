@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { NormalizedUserId } from '../../../common/interfaces/user-id.interface';
 import { ACTIVE_FLASH_SALE_ID } from '../../flash-sales/constants/flash-sales.constants';
-import { type ConfirmedReservation, SaleLedgerRepository } from '../../sale-ledger';
+import { SaleLedgerRepository } from '../../sale-ledger';
 import type {
   ConfirmedBatchPage,
   ListConfirmedBatchParams,
@@ -31,10 +31,6 @@ export class OrdersService {
     const orderId = await this.ordersRepository.findConfirmedOrderId(ACTIVE_FLASH_SALE_ID, userId);
     if (orderId === null) return { status: 'NONE', userId };
     return { status: 'CONFIRMED', orderId, userId };
-  }
-
-  async listConfirmedReservations(saleId: string): Promise<readonly ConfirmedReservation[]> {
-    return this.ordersRepository.listConfirmed(saleId);
   }
 
   async hasConfirmedOrders(saleId: string): Promise<boolean> {

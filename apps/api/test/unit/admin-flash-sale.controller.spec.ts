@@ -7,6 +7,9 @@ import {
   ERROR_CODES,
   UNAUTHORIZED_ADMIN_MESSAGE,
 } from '../../src/common/constants/common.constants';
+import { RateLimitGuard } from '../../src/common/guards/rate-limit.guard';
+import { ClockService } from '../../src/common/providers/clock.service';
+import { RateLimitService } from '../../src/common/services/rate-limit.service';
 import type { AppEnv } from '../../src/config/env.interface';
 import { AdminFlashSaleController } from '../../src/modules/admin/controllers/admin-flash-sale.controller';
 import { AdminEndpointsGuard } from '../../src/modules/admin/guards/admin-endpoints.guard';
@@ -35,6 +38,8 @@ describe('AdminFlashSaleController', () => {
   let app: NestFastifyApplication;
   let isAdminEnabled = true;
   let adminApiKey: string | undefined;
+  let rateLimitEnabled = false;
+  let rateLimitMax = 1;
   const reset = jest.fn<Promise<FlashSaleStatus>, [ResetFlashSaleInput]>();
 
   beforeAll(async () => {
@@ -42,12 +47,24 @@ describe('AdminFlashSaleController', () => {
       controllers: [AdminFlashSaleController],
       providers: [
         AdminEndpointsGuard,
+        RateLimitGuard,
+        RateLimitService,
+        ClockService,
         { provide: FlashSaleResetService, useValue: { reset } },
         {
           provide: ConfigService,
           useValue: {
-            get: (key: keyof AppEnv) =>
-              key === 'ENABLE_ADMIN_ENDPOINTS' ? isAdminEnabled : adminApiKey,
+            get: (key: keyof AppEnv) => {
+              const overrides: Partial<AppEnv> = {
+                NODE_ENV: 'test',
+                ENABLE_ADMIN_ENDPOINTS: isAdminEnabled,
+                ADMIN_API_KEY: adminApiKey,
+                RATE_LIMIT_ENABLED: rateLimitEnabled,
+                RATE_LIMIT_WINDOW_MS: 60_000,
+                RATE_LIMIT_MAX: rateLimitMax,
+              };
+              return overrides[key];
+            },
           },
         },
       ],
@@ -63,6 +80,8 @@ describe('AdminFlashSaleController', () => {
   beforeEach(() => {
     isAdminEnabled = true;
     adminApiKey = undefined;
+    rateLimitEnabled = false;
+    rateLimitMax = 1;
     reset.mockReset();
     reset.mockResolvedValue(STATUS);
   });
@@ -98,11 +117,23 @@ describe('AdminFlashSaleController', () => {
     expect(reset).toHaveBeenCalledWith({});
   });
 
-  it('answers 200 when no body is sent', async () => {
+  it('answers 415 when no body and no content-type are sent', async () => {
     const response = await request(app.getHttpServer()).post(RESET_PATH);
 
-    expect(response.status).toBe(200);
-    expect(reset).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(415);
+    expect(response.body.code).toBe('UNSUPPORTED_MEDIA_TYPE');
+    expect(reset).not.toHaveBeenCalled();
+  });
+
+  it('answers 415 and skips the service when content-type is text/plain', async () => {
+    const response = await request(app.getHttpServer())
+      .post(RESET_PATH)
+      .set('content-type', 'text/plain')
+      .send('{}');
+
+    expect(response.status).toBe(415);
+    expect(response.body.code).toBe('UNSUPPORTED_MEDIA_TYPE');
+    expect(reset).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -112,6 +143,8 @@ describe('AdminFlashSaleController', () => {
     { totalStock: '5' },
     { durationSeconds: 0 },
     { startsOffsetSeconds: 31_536_001 },
+    { startsAt: '2030-01-01T10:00:00' },
+    { endsAt: '2030-01-01' },
     { productName: 'X' },
     { surprise: true },
   ])('answers 400 and skips the service for the body %j', async (body) => {
@@ -120,6 +153,19 @@ describe('AdminFlashSaleController', () => {
     expect(response.status).toBe(400);
     expect(response.body.code).toBe('BAD_REQUEST');
     expect(reset).not.toHaveBeenCalled();
+  });
+
+  it('rate limits reset requests via RateLimitGuard when enabled', async () => {
+    rateLimitEnabled = true;
+    rateLimitMax = 1;
+
+    const first = await request(app.getHttpServer()).post(RESET_PATH).send({});
+    const second = await request(app.getHttpServer()).post(RESET_PATH).send({});
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(429);
+    expect(second.body.code).toBe(ERROR_CODES.RATE_LIMITED);
+    expect(reset).toHaveBeenCalledTimes(1);
   });
 
   it('answers 404 and skips the service when admin endpoints are disabled', async () => {
